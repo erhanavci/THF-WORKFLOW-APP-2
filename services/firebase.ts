@@ -7,12 +7,12 @@ import { getStorage } from 'firebase/storage';
 // Your web app's Firebase configuration
 // IMPORTANT: Replace this with your own Firebase project's configuration.
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyAJOj8RC6xI5VfkFJUNICCEM6cC_soJGY8",
+  authDomain: "thf-wflow-app.firebaseapp.com",
+  projectId: "thf-wflow-app",
+  storageBucket: "thf-wflow-app.firebasestorage.app",
+  messagingSenderId: "437767178687",
+  appId: "1:437767178687:web:c4321fb8c1b3a908faf90a"
 };
 
 // Initialize Firebase

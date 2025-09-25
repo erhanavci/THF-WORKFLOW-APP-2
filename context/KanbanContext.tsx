@@ -48,6 +48,8 @@ interface IKanbanContext {
   currentUser: Member | null;
   notifications: Notification[];
   notificationSettings: NotificationSettings;
+  isOffline: boolean;
+  firestoreError: Error | null;
   addTask: (
     taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'creatorId'>,
     newAttachments: { file: File; id: string }[],
@@ -97,6 +99,8 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   });
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
+  const [isOffline, setIsOffline] = useState(false);
+  const [firestoreError, setFirestoreError] = useState<Error | null>(null);
   const { showToast } = useToast();
 
   const getMemberById = useCallback((id: ID) => members.find(m => m.id === id), [members]);
@@ -184,36 +188,75 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             const unsubTasks = onSnapshot(collection(firestoreDb, DB_CONFIG.STORES.TASKS), (snapshot) => {
                 const updatedTasks = snapshot.docs.map(doc => doc.data() as Task);
                 setTasks(updatedTasks.filter(t => !t.isArchived));
+            }, (error) => {
+                console.error("Firestore 'tasks' listener failed:", error);
+                // FIX: Create a new Error object to ensure type compatibility with the state.
+                setFirestoreError(new Error(`[${error.code}] ${error.message}`));
+                setIsOffline(true);
+                setLoading(false);
             });
-            const unsubMembers = onSnapshot(collection(firestoreDb, DB_CONFIG.STORES.MEMBERS), (snapshot) => {
-                const updatedMembers = snapshot.docs.map(doc => doc.data() as Member);
-                setMembers(updatedMembers);
-                // Update current user's info if it changes
-                const updatedCurrentUser = updatedMembers.find(m => m.id === firebaseUser.uid);
-                if(updatedCurrentUser) setCurrentUser(updatedCurrentUser);
-            });
+            const unsubMembers = onSnapshot(collection(firestoreDb, DB_CONFIG.STORES.MEMBERS), 
+                (snapshot) => {
+                    if (snapshot.metadata.fromCache) {
+                        console.warn("Members data from cache. Connection to Firestore might be lost.");
+                        setIsOffline(true);
+                    } else {
+                        setIsOffline(false);
+                        if (firestoreError) setFirestoreError(null); // Connection re-established
+                    }
+                    const updatedMembers = snapshot.docs.map(doc => doc.data() as Member);
+                    setMembers(updatedMembers);
+                    // Update current user's info if it changes
+                    const updatedCurrentUser = updatedMembers.find(m => m.id === firebaseUser.uid);
+                    if(updatedCurrentUser) setCurrentUser(updatedCurrentUser);
+                },
+                (error) => {
+                    console.error("Firestore 'members' listener failed:", error);
+                    // FIX: Create a new Error object to ensure type compatibility with the state.
+                    setFirestoreError(new Error(`[${error.code}] ${error.message}`));
+                    setIsOffline(true);
+                    setLoading(false);
+                }
+            );
             const unsubConfig = onSnapshot(doc(firestoreDb, DB_CONFIG.STORES.CONFIG, BOARD_CONFIG_ID), (configDoc) => {
                 const config = configDoc.data() as BoardConfig | undefined;
                 setColumnNames(config?.columnNames || DEFAULT_COLUMN_NAMES);
+            }, (error) => {
+                console.error("Firestore 'config' listener failed:", error);
+                // FIX: Create a new Error object to ensure type compatibility with the state.
+                setFirestoreError(new Error(`[${error.code}] ${error.message}`));
+                setIsOffline(true);
+                setLoading(false);
             });
             const notificationsQuery = query(collection(firestoreDb, DB_CONFIG.STORES.NOTIFICATIONS), where("recipientId", "==", firebaseUser.uid));
             const unsubNotifications = onSnapshot(notificationsQuery, (snapshot) => {
                 const userNotifications = snapshot.docs.map(doc => doc.data() as Notification);
                 userNotifications.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
                 setNotifications(userNotifications);
+            }, (error) => {
+                console.error("Firestore 'notifications' listener failed:", error);
+                // FIX: Create a new Error object to ensure type compatibility with the state.
+                setFirestoreError(new Error(`[${error.code}] ${error.message}`));
+                setIsOffline(true);
+                setLoading(false);
             });
             
-            // Set current user from DB
-            const userProfile = await db.dbGetMember(firebaseUser.uid);
-            if (userProfile) {
-                setCurrentUser(userProfile);
-            } else {
-                // This case should ideally not happen if user creation is atomic
-                console.error("User is authenticated but no profile found in database!");
-                firebaseSignOut(auth);
+            try {
+                const userProfile = await db.dbGetMember(firebaseUser.uid);
+                if (userProfile) {
+                    setCurrentUser(userProfile);
+                } else {
+                    console.error("User is authenticated but no profile found in database!");
+                    firebaseSignOut(auth);
+                }
+                setLoading(false);
+            } catch (error: any) {
+                console.error("Error fetching user profile:", error);
+                // FIX: Create a new Error object to ensure type compatibility with the state.
+                setFirestoreError(new Error(`[${error.code}] ${error.message}`));
+                setIsOffline(true);
+                setLoading(false);
             }
-            
-            setLoading(false);
 
             // Return cleanup function to unsubscribe from listeners when user signs out
             return () => {
@@ -228,6 +271,7 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
             setTasks([]);
             setMembers([]);
             setNotifications([]);
+            setFirestoreError(null);
             setLoading(false);
         }
     });
@@ -654,6 +698,8 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     currentUser,
     notifications,
     notificationSettings,
+    isOffline,
+    firestoreError,
     addTask,
     updateTask,
     deleteTask,
