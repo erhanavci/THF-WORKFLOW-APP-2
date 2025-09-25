@@ -1,6 +1,8 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { Attachment } from '../types';
-import { formatFileSize } from '../utils/helpers';
+import { formatFileSize, downloadBlob } from '../utils/helpers';
+import { dbGetBlob } from '../services/db';
+import { DB_CONFIG } from '../constants';
 import FilePreviewModal from './FilePreviewModal';
 import { useToast } from '../hooks/useToast';
 
@@ -31,12 +33,17 @@ const Thumbnail: React.FC<ThumbnailProps> = ({ file, attachment, onClick }) => {
     useEffect(() => {
         let objectUrl: string | null = null;
 
-        const generateUrl = () => {
+        const generateUrl = async () => {
+            let blob: Blob | undefined;
             if (file) {
-                objectUrl = URL.createObjectURL(file);
-                setPreviewUrl(objectUrl);
+                blob = file;
             } else if (attachment) {
-                setPreviewUrl(attachment.url);
+                blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
+            }
+
+            if (blob) {
+                objectUrl = URL.createObjectURL(blob);
+                setPreviewUrl(objectUrl);
             }
         };
 
@@ -79,7 +86,7 @@ interface FileListProps {
 
 const FileList: React.FC<FileListProps> = ({ currentAttachments, newAttachments, onNewAttachmentsChange, onCurrentAttachmentsChange, onAttachmentsToRemoveChange }) => {
   const { showToast } = useToast();
-  const [previewFile, setPreviewFile] = useState<{ name: string; type: string; url: string } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ name: string; type: string; blob: Blob } | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -97,18 +104,24 @@ const FileList: React.FC<FileListProps> = ({ currentAttachments, newAttachments,
     onAttachmentsToRemoveChange(prev => [...prev, attachment]);
   };
 
-  const handleDownload = (attachment: Attachment) => {
-    window.open(attachment.url, '_blank');
+  const handleDownload = async (attachment: Attachment) => {
+    const blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
+    if(blob) {
+        downloadBlob(blob, attachment.fileName);
+    }
   }
 
-  const handlePreviewCurrent = (attachment: Attachment) => {
-    setPreviewFile({ name: attachment.fileName, type: attachment.mimeType, url: attachment.url });
+  const handlePreviewCurrent = async (attachment: Attachment) => {
+    const blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
+    if (blob) {
+      setPreviewFile({ name: attachment.fileName, type: attachment.mimeType, blob });
+    } else {
+      showToast('Önizleme için ek yüklenemedi.', 'error');
+    }
   };
 
   const handlePreviewNew = (file: File) => {
-    const url = URL.createObjectURL(file);
-    setPreviewFile({ name: file.name, type: file.type, url: url });
-    // Note: This object URL should be revoked when the modal closes, which is handled in the preview modal.
+    setPreviewFile({ name: file.name, type: file.type, blob: file });
   };
 
 

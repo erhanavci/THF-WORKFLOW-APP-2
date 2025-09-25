@@ -1,7 +1,6 @@
 import { Member, Task, TaskStatus, MemberRole, TaskPriority } from './types';
 
-// FIX: Corrected the type for TEAM_MEMBERS_SEED to include the optional `password` property, which is present in the seed data.
-export const TEAM_MEMBERS_SEED: (Omit<Member, 'id' | 'createdAt' | 'updatedAt'> & { password?: string })[] = [
+export const TEAM_MEMBERS_SEED: Omit<Member, 'id' | 'createdAt' | 'updatedAt'>[] = [
   { name: 'Erhan Avcı', email: 'erhan.avci@thf.org.tr', role: MemberRole.ADMIN, avatarUrl: 'https://i.pravatar.cc/150?u=erhan.avci@thf.org.tr', password: 'password123' },
   { name: 'Berke Özkan', email: 'berke.ozkan@thf.org.tr', role: MemberRole.MEMBER, avatarUrl: 'https://i.pravatar.cc/150?u=berke.ozkan@thf.org.tr', password: 'password123' },
 ];

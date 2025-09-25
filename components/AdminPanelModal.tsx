@@ -97,7 +97,7 @@ const TeamManagement: React.FC = () => {
             showToast("Kendinizi silemezsiniz.", "error");
             return;
         }
-        if (window.confirm(`${member.name} adlı üyeyi kaldırmak istediğinizden emin misiniz? Bu işlem, üyeyi sadece pano veritabanından kaldırır, giriş sisteminden değil.`)) {
+        if (window.confirm(`${member.name} adlı üyeyi kaldırmak istediğinizden emin misiniz?`)) {
             deleteMember(member.id);
         }
     };
@@ -126,7 +126,7 @@ const TeamManagement: React.FC = () => {
                                         </div>
                                         <div className="flex-grow space-y-1">
                                             <input type="text" value={editingMember.name} onChange={(e) => handleInputChange('name', e.target.value)} className="block w-full px-2 py-1 border border-gray-300 rounded-md bg-gray-50 text-sm" placeholder="İsim" />
-                                            <input type="email" value={editingMember.email} readOnly className="block w-full px-2 py-1 border border-gray-300 rounded-md bg-gray-100 text-sm cursor-not-allowed" placeholder="E-posta" />
+                                            <input type="email" value={editingMember.email} onChange={(e) => handleInputChange('email', e.target.value)} className="block w-full px-2 py-1 border border-gray-300 rounded-md bg-gray-50 text-sm" placeholder="E-posta" />
                                         </div>
                                     </div>
                                     <div className="w-32 shrink-0">

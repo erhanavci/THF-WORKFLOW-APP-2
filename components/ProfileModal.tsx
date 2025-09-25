@@ -14,6 +14,8 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
   const { showToast } = useToast();
   
   const [editableUser, setEditableUser] = useState<Member | null>(currentUser);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [newAvatarFile, setNewAvatarFile] = useState<File | null>(null);
   const [newAvatarPreviewUrl, setNewAvatarPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -45,8 +47,17 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
       showToast('İsim alanı boş bırakılamaz.', 'error');
       return;
     }
+    if (newPassword && newPassword !== confirmPassword) {
+      showToast('Şifreler eşleşmiyor.', 'error');
+      return;
+    }
     
-    updateMember(editableUser, newAvatarFile ?? undefined);
+    let userToUpdate = { ...editableUser };
+    if (newPassword) {
+        userToUpdate.password = newPassword;
+    }
+
+    updateMember(userToUpdate, newAvatarFile ?? undefined);
     onClose();
   };
   
@@ -104,11 +115,13 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
             <label htmlFor="name" className={labelStyles}>İsim</label>
             <input type="text" id="name" name="name" value={editableUser.name} onChange={handleInputChange} className={inputStyles} />
           </div>
-           <div>
-            <label className={labelStyles}>Şifre</label>
-            <p className="text-sm text-gray-500 mt-2">
-              Şifrenizi değiştirmek için Firebase'in şifre sıfırlama özelliğini kullanın.
-            </p>
+          <div>
+            <label htmlFor="newPassword" className={labelStyles}>Yeni Şifre (Değiştirmek için doldurun)</label>
+            <input type="password" id="newPassword" name="newPassword" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className={inputStyles} />
+          </div>
+          <div>
+            <label htmlFor="confirmPassword" className={labelStyles}>Yeni Şifreyi Onayla</label>
+            <input type="password" id="confirmPassword" name="confirmPassword" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} className={inputStyles} />
           </div>
         </div>
 

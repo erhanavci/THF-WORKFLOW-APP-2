@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { VoiceNote } from '../types';
-import { formatDuration } from '../utils/helpers';
+import { formatDuration, downloadBlob } from '../utils/helpers';
 import { useToast } from '../hooks/useToast';
+import { dbGetBlob } from '../services/db';
+import { DB_CONFIG } from '../constants';
 
 interface VoiceRecorderProps {
   currentVoiceNotes: VoiceNote[];
@@ -51,7 +53,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
     return () => {
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('pause', handlePause);
-      if (currentAudioUrlRef.current && currentAudioUrlRef.current.startsWith('blob:')) {
+      if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current);
       }
     };
@@ -110,7 +112,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
     setPlayingNoteId(null);
   }
   
-  const playUrl = (url: string, noteId: string) => {
+  const playBlob = (blob: Blob, noteId: string) => {
     const audio = audioPlayerRef.current;
     if (!audio) return;
 
@@ -118,33 +120,41 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
         audio.pause();
         return;
     }
-
-    if (currentAudioUrlRef.current && currentAudioUrlRef.current.startsWith('blob:')) {
+    
+    if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current);
     }
-    
+
+    const url = URL.createObjectURL(blob);
     currentAudioUrlRef.current = url;
     audio.src = url;
 
     audio.play().catch(e => {
         console.error("Audio playback failed:", e);
-        showToast("Ses oynatılamadı.", "error");
+        showToast("Ses oynatılamadı. İşlem desteklenmiyor.", "error");
+        URL.revokeObjectURL(url);
+        currentAudioUrlRef.current = null;
         setPlayingNoteId(null);
     });
     setPlayingNoteId(noteId);
-  }
-  
-  const playBlob = (blob: Blob, noteId: string) => {
-    const url = URL.createObjectURL(blob);
-    playUrl(url, noteId);
   };
 
-  const playCurrentVoiceNote = (note: VoiceNote) => {
-      playUrl(note.url, note.id);
+  const playCurrentVoiceNote = async (note: VoiceNote) => {
+    if (playingNoteId === note.id) {
+        stopPlayback();
+        return;
+    }
+    const blob = await dbGetBlob(DB_CONFIG.STORES.VOICE_NOTES, note.blobKey);
+    if(blob) {
+      playBlob(blob, note.id);
+    } else {
+      showToast("Sesli not yüklenemedi.", "error");
+    }
   }
 
-  const downloadCurrentVoiceNote = (note: VoiceNote) => {
-    window.open(note.url, '_blank');
+  const downloadCurrentVoiceNote = async (note: VoiceNote) => {
+    const blob = await dbGetBlob(DB_CONFIG.STORES.VOICE_NOTES, note.blobKey);
+    if(blob) downloadBlob(blob, `seslinot-${note.id}.webm`);
   }
 
   return (

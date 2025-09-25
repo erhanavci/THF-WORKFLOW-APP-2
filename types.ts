@@ -35,11 +35,13 @@ export const AllTaskPriorities: TaskPriority[] = [
 
 
 export interface Member {
-  id: ID; // This will be the Firebase Auth UID
+  id: ID;
   name: string;
   email: string;
+  password?: string;
   role: MemberRole;
-  avatarUrl?: string; // Will store Firebase Storage URL
+  avatarUrl?: string;
+  avatarBlobKey?: ID;
   createdAt: string; // ISO
   updatedAt: string; // ISO
 };
@@ -49,13 +51,13 @@ export interface Attachment {
   fileName: string;
   mimeType: string;
   sizeBytes: number;
-  url: string;        // URL from Firebase Storage
+  blobKey: ID;        // key to retrieve blob from IndexedDB
   createdAt: string;
 };
 
 export interface VoiceNote {
   id: ID;
-  url: string;       // URL from Firebase Storage
+  blobKey: ID;        // key to retrieve audio blob
   durationMs: number;
   createdAt: string;
 };

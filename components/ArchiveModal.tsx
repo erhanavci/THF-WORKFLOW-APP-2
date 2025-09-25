@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import Modal from './ui/Modal';
+import { dbGetTasks } from '../services/db';
 import { Task } from '../types';
 import { useKanbanStore } from '../hooks/useKanbanStore';
 import { formatDateTime } from '../utils/helpers';
 import Avatar from './Avatar';
 import { UndoIcon } from './icons/Icons';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { db } from '../services/firebase';
-import { DB_CONFIG } from '../constants';
 
 interface ArchiveModalProps {
   isOpen: boolean;
@@ -24,17 +22,15 @@ const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
     if (isOpen) {
       const fetchArchived = async () => {
         setLoading(true);
-        const tasksRef = collection(db, DB_CONFIG.STORES.TASKS);
-        const q = query(tasksRef, where("isArchived", "==", true), orderBy("completedAt", "desc"));
-        const querySnapshot = await getDocs(q);
-        const archived = querySnapshot.docs.map(doc => doc.data() as Task);
-        
+        const allTasks = await dbGetTasks();
+        const archived = allTasks
+          .filter(task => task.isArchived && task.completedAt)
+          .sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
         setArchivedTasks(archived);
         setLoading(false);
-
         // Automatically open the first month if available
-        if (archived.length > 0 && archived[0].completedAt) {
-            const firstMonth = new Date(archived[0].completedAt).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
+        if (archived.length > 0) {
+            const firstMonth = new Date(archived[0].completedAt!).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
             setOpenMonth(firstMonth);
         }
       };
@@ -43,10 +39,10 @@ const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
   }, [isOpen]);
 
   const groupedTasks = archivedTasks.reduce((acc, task) => {
-    const monthYear = task.completedAt ? new Date(task.completedAt).toLocaleDateString('tr-TR', {
+    const monthYear = new Date(task.completedAt!).toLocaleDateString('tr-TR', {
       month: 'long',
       year: 'numeric',
-    }) : 'Tarih Yok';
+    });
     if (!acc[monthYear]) {
       acc[monthYear] = [];
     }

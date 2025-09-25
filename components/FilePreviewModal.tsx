@@ -1,35 +1,45 @@
 import React, { useEffect, useState } from 'react';
 import Modal from './ui/Modal';
+import { downloadBlob } from '../utils/helpers';
 
 interface FilePreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
-  file: { name: string; type: string; url: string } | null;
+  file: { name: string; type: string; blob: Blob } | null;
 }
 
 const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ isOpen, onClose, file }) => {
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    let isMounted = true;
-    if (file && file.type.startsWith('text/')) {
-        setIsLoading(true);
-        fetch(file.url)
-            .then(response => response.text())
-            .then(text => {
-                if (isMounted) setTextContent(text);
-            })
-            .catch(() => {
-                if (isMounted) setTextContent('Dosya içeriği okunamadı.');
-            })
-            .finally(() => {
-                if (isMounted) setIsLoading(false);
-            });
-    } else {
+    if (file) {
+      setIsLoading(true);
+      const url = URL.createObjectURL(file.blob);
+      setFileUrl(url);
+
+      if (file.type.startsWith('text/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setTextContent(e.target?.result as string);
+          setIsLoading(false);
+        };
+        reader.onerror = () => {
+          setTextContent('Dosya içeriği okunamadı.');
+          setIsLoading(false);
+        };
+        reader.readAsText(file.blob);
+      } else {
+        setIsLoading(false);
+      }
+
+      return () => {
+        URL.revokeObjectURL(url);
+        setFileUrl(null);
         setTextContent(null);
+      };
     }
-    return () => { isMounted = false };
   }, [file]);
 
   if (!isOpen || !file) {
@@ -37,13 +47,13 @@ const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ isOpen, onClose, fi
   }
 
   const handleDownload = () => {
-    window.open(file.url, '_blank');
+    downloadBlob(file.blob, file.name);
   };
 
   const renderPreview = () => {
     if (isLoading) return <p>Önizleme yükleniyor...</p>;
-    
-    const fileUrl = file.url;
+    if (!fileUrl) return <p>Dosya yüklenemedi.</p>;
+
     const mimeType = file.type;
 
     if (mimeType.startsWith('image/')) {
