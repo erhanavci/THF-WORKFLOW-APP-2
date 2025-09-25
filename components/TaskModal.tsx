@@ -102,18 +102,14 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, onClose }) => {
       priority,
       assigneeIds,
       responsibleId: responsibleId!,
+      attachments: currentAttachments,
+      voiceNotes: currentVoiceNotes,
       notes,
     };
 
     try {
       if (task) {
-        const updatedTaskData = {
-            ...task,
-            ...taskData,
-            attachments: currentAttachments,
-            voiceNotes: currentVoiceNotes,
-        };
-        await updateTask(updatedTaskData, newAttachments, attachmentsToRemove, newVoiceNotes, voiceNotesToRemove);
+        await updateTask({ ...task, ...taskData }, newAttachments, attachmentsToRemove, newVoiceNotes, voiceNotesToRemove);
       } else {
         await addTask(taskData, newAttachments, newVoiceNotes);
       }
@@ -168,7 +164,7 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, onClose }) => {
             <div className="space-y-4">
                 <h3 className={labelStyles}>Notlar</h3>
                 <div className="space-y-4 max-h-48 overflow-y-auto pr-2 border-b border-gray-200 pb-4">
-                    {notes.length > 0 ? notes.sort((a,b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()).map(note => {
+                    {notes.length > 0 ? notes.map(note => {
                         const author = getMemberById(note.authorId);
                         return (
                             <div key={note.id} className="flex items-start gap-3">
@@ -243,7 +239,7 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, onClose }) => {
               <label htmlFor="responsible" className={labelStyles}>Sorumlu</label>
               <select id="responsible" value={responsibleId || ''} onChange={handleResponsibleChange} className={inputStyles} disabled={!canManageAssignees}>
                 <option value="" disabled>Bir kişi seçin</option>
-                {members.filter(m => assigneeIds.includes(m.id)).map(member => (
+                {members.map(member => (
                   <option key={member.id} value={member.id}>{member.name}</option>
                 ))}
               </select>

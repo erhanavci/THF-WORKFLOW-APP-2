@@ -1,6 +1,8 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { Attachment } from '../types';
-import { formatFileSize } from '../utils/helpers';
+import { formatFileSize, downloadBlob } from '../utils/helpers';
+import { dbGetBlob } from '../services/db';
+import { DB_CONFIG } from '../constants';
 import FilePreviewModal from './FilePreviewModal';
 import { useToast } from '../hooks/useToast';
 
@@ -31,13 +33,21 @@ const Thumbnail: React.FC<ThumbnailProps> = ({ file, attachment, onClick }) => {
     useEffect(() => {
         let objectUrl: string | null = null;
 
-        if (file) {
-            objectUrl = URL.createObjectURL(file);
-            setPreviewUrl(objectUrl);
-        } else if (attachment) {
-            // Directly use the storage URL
-            setPreviewUrl(attachment.blobKey);
-        }
+        const generateUrl = async () => {
+            let blob: Blob | undefined;
+            if (file) {
+                blob = file;
+            } else if (attachment) {
+                blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
+            }
+
+            if (blob) {
+                objectUrl = URL.createObjectURL(blob);
+                setPreviewUrl(objectUrl);
+            }
+        };
+
+        generateUrl();
 
         return () => {
             if (objectUrl) {
@@ -76,7 +86,7 @@ interface FileListProps {
 
 const FileList: React.FC<FileListProps> = ({ currentAttachments, newAttachments, onNewAttachmentsChange, onCurrentAttachmentsChange, onAttachmentsToRemoveChange }) => {
   const { showToast } = useToast();
-  const [previewFile, setPreviewFile] = useState<{ name: string; type: string; url: string; } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ name: string; type: string; blob: Blob } | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -94,23 +104,24 @@ const FileList: React.FC<FileListProps> = ({ currentAttachments, newAttachments,
     onAttachmentsToRemoveChange(prev => [...prev, attachment]);
   };
 
-  const handleDownload = (url: string, fileName: string) => {
-    const a = document.createElement('a');
-    a.href = url;
-    a.target = '_blank'; // Open in new tab to download
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  const handleDownload = async (attachment: Attachment) => {
+    const blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
+    if(blob) {
+        downloadBlob(blob, attachment.fileName);
+    }
   }
 
-  const handlePreviewCurrent = (attachment: Attachment) => {
-      setPreviewFile({ name: attachment.fileName, type: attachment.mimeType, url: attachment.blobKey });
+  const handlePreviewCurrent = async (attachment: Attachment) => {
+    const blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
+    if (blob) {
+      setPreviewFile({ name: attachment.fileName, type: attachment.mimeType, blob });
+    } else {
+      showToast('Önizleme için ek yüklenemedi.', 'error');
+    }
   };
 
   const handlePreviewNew = (file: File) => {
-    const url = URL.createObjectURL(file);
-    setPreviewFile({ name: file.name, type: file.type, url: url });
+    setPreviewFile({ name: file.name, type: file.type, blob: file });
   };
 
 
@@ -147,7 +158,7 @@ const FileList: React.FC<FileListProps> = ({ currentAttachments, newAttachments,
                 <p className="text-gray-500">{formatFileSize(att.sizeBytes)}</p>
               </div>
               <div className="mt-1 flex justify-end gap-2">
-                <button type="button" onClick={() => handleDownload(att.blobKey, att.fileName)} className="text-blue-500 hover:text-blue-700 text-xs font-semibold">İndir</button>
+                <button type="button" onClick={() => handleDownload(att)} className="text-blue-500 hover:text-blue-700 text-xs font-semibold">İndir</button>
                 <button type="button" onClick={() => removeCurrentAttachment(att)} className="text-red-500 hover:text-red-700 text-xs font-semibold">Kaldır</button>
               </div>
             </div>

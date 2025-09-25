@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { VoiceNote } from '../types';
-import { formatDuration } from '../utils/helpers';
+import { formatDuration, downloadBlob } from '../utils/helpers';
 import { useToast } from '../hooks/useToast';
+import { dbGetBlob } from '../services/db';
+import { DB_CONFIG } from '../constants';
 
 interface VoiceRecorderProps {
   currentVoiceNotes: VoiceNote[];
@@ -51,7 +53,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
     return () => {
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('pause', handlePause);
-      if (currentAudioUrlRef.current && currentAudioUrlRef.current.startsWith('blob:')) {
+      if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current);
       }
     };
@@ -110,7 +112,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
     setPlayingNoteId(null);
   }
   
-  const playUrl = (url: string, noteId: string, isBlobUrl = false) => {
+  const playBlob = (blob: Blob, noteId: string) => {
     const audio = audioPlayerRef.current;
     if (!audio) return;
 
@@ -119,38 +121,41 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
         return;
     }
     
-    if (currentAudioUrlRef.current && currentAudioUrlRef.current.startsWith('blob:')) {
+    if (currentAudioUrlRef.current) {
         URL.revokeObjectURL(currentAudioUrlRef.current);
     }
 
+    const url = URL.createObjectURL(blob);
     currentAudioUrlRef.current = url;
     audio.src = url;
 
     audio.play().catch(e => {
         console.error("Audio playback failed:", e);
-        showToast("Ses oynatılamadı.", "error");
-        if (isBlobUrl) URL.revokeObjectURL(url);
+        showToast("Ses oynatılamadı. İşlem desteklenmiyor.", "error");
+        URL.revokeObjectURL(url);
         currentAudioUrlRef.current = null;
         setPlayingNoteId(null);
     });
     setPlayingNoteId(noteId);
   };
 
-  const playBlob = (blob: Blob, noteId: string) => {
-    const url = URL.createObjectURL(blob);
-    playUrl(url, noteId, true);
-  };
+  const playCurrentVoiceNote = async (note: VoiceNote) => {
+    if (playingNoteId === note.id) {
+        stopPlayback();
+        return;
+    }
+    const blob = await dbGetBlob(DB_CONFIG.STORES.VOICE_NOTES, note.blobKey);
+    if(blob) {
+      playBlob(blob, note.id);
+    } else {
+      showToast("Sesli not yüklenemedi.", "error");
+    }
+  }
 
-  const downloadUrl = (url: string, fileName: string) => {
-      const a = document.createElement('a');
-      a.href = url;
-      a.target = '_blank';
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-  };
-
+  const downloadCurrentVoiceNote = async (note: VoiceNote) => {
+    const blob = await dbGetBlob(DB_CONFIG.STORES.VOICE_NOTES, note.blobKey);
+    if(blob) downloadBlob(blob, `seslinot-${note.id}.webm`);
+  }
 
   return (
     <div>
@@ -172,13 +177,13 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
            {currentVoiceNotes.map(note => (
             <li key={note.id} className="flex items-center justify-between p-2 bg-white rounded border border-gray-200">
                 <div className="flex items-center gap-2">
-                    <button type="button" onClick={() => playUrl(note.blobKey, note.id)} className="text-blue-500">
+                    <button type="button" onClick={() => playCurrentVoiceNote(note)} className="text-blue-500">
                       {playingNoteId === note.id ? <PauseIcon className="w-5 h-5"/> : <PlayIcon className="w-5 h-5"/>}
                     </button>
                     <span>Sesli Not ({formatDuration(note.durationMs)})</span>
                 </div>
                 <div>
-                    <button type="button" onClick={() => downloadUrl(note.blobKey, `seslinot-${note.id}.webm`)} className="text-blue-500 hover:text-blue-700 mr-2">İndir</button>
+                    <button type="button" onClick={() => downloadCurrentVoiceNote(note)} className="text-blue-500 hover:text-blue-700 mr-2">İndir</button>
                     <button type="button" onClick={() => removeCurrentVoiceNote(note)} className="text-red-500 hover:text-red-700">Kaldır</button>
                 </div>
             </li>

@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Member } from '../types';
+import { dbGetBlob } from '../services/db';
+import { DB_CONFIG } from '../constants';
 
 interface AvatarProps {
   member: Member;
@@ -9,7 +11,37 @@ interface AvatarProps {
 }
 
 const Avatar: React.FC<AvatarProps> = ({ member, size = 'md', responsible = false, srcOverride }) => {
-  const imageUrl = srcOverride || member.avatarUrl;
+  const [imageUrl, setImageUrl] = useState<string | undefined>(member.avatarUrl);
+
+  useEffect(() => {
+    if (srcOverride) {
+      setImageUrl(srcOverride);
+      return;
+    }
+
+    let objectUrl: string | null = null;
+    const loadAvatar = async () => {
+      if (member.avatarBlobKey) {
+        const blob = await dbGetBlob(DB_CONFIG.STORES.AVATARS, member.avatarBlobKey);
+        if (blob) {
+          objectUrl = URL.createObjectURL(blob);
+          setImageUrl(objectUrl);
+        } else {
+          setImageUrl(member.avatarUrl);
+        }
+      } else {
+        setImageUrl(member.avatarUrl);
+      }
+    };
+    
+    loadAvatar();
+
+    return () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [member.avatarBlobKey, member.avatarUrl, srcOverride]);
 
   const sizeClasses = {
     sm: 'w-6 h-6',
@@ -30,6 +62,7 @@ const Avatar: React.FC<AvatarProps> = ({ member, size = 'md', responsible = fals
           className={`${sizeClasses[size]} rounded-full object-cover ring-2 ring-white ${responsible ? 'ring-sky-500' : ''}`}
           src={imageUrl}
           alt={member.name}
+          onError={() => setImageUrl(undefined)}
         />
       ) : (
         fallbackAvatar

@@ -1,5 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import Modal from './ui/Modal';
+import { dbGetTasks } from '../services/db';
 import { Task } from '../types';
 import { useKanbanStore } from '../hooks/useKanbanStore';
 import { formatDateTime } from '../utils/helpers';
@@ -12,37 +13,42 @@ interface ArchiveModalProps {
 }
 
 const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
-  const { getMemberById, unarchiveTask, tasks: allTasks, loading } = useKanbanStore();
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { getMemberById, unarchiveTask } = useKanbanStore();
   const [openMonth, setOpenMonth] = useState<string | null>(null);
 
-  const archivedTasks = useMemo(() => {
-    return allTasks
-      .filter(task => task.isArchived && task.completedAt)
-      .sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
-  }, [allTasks]);
-
-
-  const groupedTasks = useMemo(() => {
-    const groups = archivedTasks.reduce((acc, task) => {
-      const monthYear = new Date(task.completedAt!).toLocaleDateString('tr-TR', {
-        month: 'long',
-        year: 'numeric',
-      });
-      if (!acc[monthYear]) {
-        acc[monthYear] = [];
-      }
-      acc[monthYear].push(task);
-      return acc;
-    }, {} as Record<string, Task[]>);
-
-    // Set the first month as open by default
-    const firstMonth = Object.keys(groups)[0];
-    if (firstMonth && !openMonth) {
-        setOpenMonth(firstMonth);
+  useEffect(() => {
+    if (isOpen) {
+      const fetchArchived = async () => {
+        setLoading(true);
+        const allTasks = await dbGetTasks();
+        const archived = allTasks
+          .filter(task => task.isArchived && task.completedAt)
+          .sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
+        setArchivedTasks(archived);
+        setLoading(false);
+        // Automatically open the first month if available
+        if (archived.length > 0) {
+            const firstMonth = new Date(archived[0].completedAt!).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
+            setOpenMonth(firstMonth);
+        }
+      };
+      fetchArchived();
     }
-    return groups;
+  }, [isOpen]);
 
-  }, [archivedTasks, openMonth]);
+  const groupedTasks = archivedTasks.reduce((acc, task) => {
+    const monthYear = new Date(task.completedAt!).toLocaleDateString('tr-TR', {
+      month: 'long',
+      year: 'numeric',
+    });
+    if (!acc[monthYear]) {
+      acc[monthYear] = [];
+    }
+    acc[monthYear].push(task);
+    return acc;
+  }, {} as Record<string, Task[]>);
   
   const toggleMonth = (month: string) => {
     setOpenMonth(openMonth === month ? null : month);
@@ -50,6 +56,7 @@ const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
 
   const handleUnarchive = async (taskToUnarchive: Task) => {
     await unarchiveTask(taskToUnarchive.id);
+    setArchivedTasks(prevTasks => prevTasks.filter(t => t.id !== taskToUnarchive.id));
   };
 
 
@@ -60,15 +67,16 @@ const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
           <p className="text-center text-gray-500">Arşiv yükleniyor...</p>
         ) : Object.keys(groupedTasks).length > 0 ? (
           <div className="space-y-3">
+            {/* FIX: Use Object.keys to iterate over groupedTasks to avoid type inference issues with Object.entries in some TypeScript configurations. */}
             {Object.keys(groupedTasks).map((monthYear) => {
-              const tasksInMonth = groupedTasks[monthYear];
+              const tasks = groupedTasks[monthYear];
               return (
                 <div key={monthYear} className="border border-gray-200 rounded-lg overflow-hidden">
                   <button
                     className="w-full flex justify-between items-center p-4 text-left font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100"
                     onClick={() => toggleMonth(monthYear)}
                   >
-                    <span>{monthYear} <span className="text-gray-500 font-normal">({tasksInMonth.length} görev)</span></span>
+                    <span>{monthYear} <span className="text-gray-500 font-normal">({tasks.length} görev)</span></span>
                     <svg className={`w-5 h-5 transition-transform ${openMonth === monthYear ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
@@ -76,7 +84,7 @@ const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
                   {openMonth === monthYear && (
                     <div className="p-4 border-t border-gray-200 bg-white">
                       <ul className="space-y-3">
-                        {tasksInMonth.map(task => {
+                        {tasks.map(task => {
                           const responsible = getMemberById(task.responsibleId);
                           return (
                             <li key={task.id} className="p-3 bg-white rounded-md border border-gray-200 flex items-center justify-between gap-4">
