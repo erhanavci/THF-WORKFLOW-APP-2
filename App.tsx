@@ -12,13 +12,13 @@ import { useKanbanStore } from './hooks/useKanbanStore';
 import UserSignIn from './components/UserSignIn';
 
 const AuthGate: React.FC = () => {
-  const { currentUser, loading } = useKanbanStore();
+  const { currentUser, authLoading } = useKanbanStore();
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
 
-  if (loading) {
+  if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <p>Uygulama yükleniyor...</p>
+        <p>Oturum durumu kontrol ediliyor...</p>
       </div>
     );
   }

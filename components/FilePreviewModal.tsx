@@ -1,44 +1,31 @@
 import React, { useEffect, useState } from 'react';
 import Modal from './ui/Modal';
-import { downloadBlob } from '../utils/helpers';
 
 interface FilePreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
-  file: { name: string; type: string; blob: Blob } | null;
+  file: { name: string; type: string; url: string } | null;
 }
 
 const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ isOpen, onClose, file }) => {
-  const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (file) {
+    if (file && file.type.startsWith('text/')) {
       setIsLoading(true);
-      const url = URL.createObjectURL(file.blob);
-      setFileUrl(url);
-
-      if (file.type.startsWith('text/')) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          setTextContent(e.target?.result as string);
+      fetch(file.url)
+        .then(response => response.text())
+        .then(text => {
+          setTextContent(text);
           setIsLoading(false);
-        };
-        reader.onerror = () => {
+        })
+        .catch(() => {
           setTextContent('Dosya içeriği okunamadı.');
           setIsLoading(false);
-        };
-        reader.readAsText(file.blob);
-      } else {
-        setIsLoading(false);
-      }
-
-      return () => {
-        URL.revokeObjectURL(url);
-        setFileUrl(null);
+        });
+    } else {
         setTextContent(null);
-      };
     }
   }, [file]);
 
@@ -47,26 +34,31 @@ const FilePreviewModal: React.FC<FilePreviewModalProps> = ({ isOpen, onClose, fi
   }
 
   const handleDownload = () => {
-    downloadBlob(file.blob, file.name);
+    const a = document.createElement('a');
+    a.href = file.url;
+    a.target = '_blank';
+    a.download = file.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   const renderPreview = () => {
     if (isLoading) return <p>Önizleme yükleniyor...</p>;
-    if (!fileUrl) return <p>Dosya yüklenemedi.</p>;
 
     const mimeType = file.type;
 
     if (mimeType.startsWith('image/')) {
-      return <img src={fileUrl} alt={file.name} className="max-w-full max-h-[70vh] object-contain mx-auto" />;
+      return <img src={file.url} alt={file.name} className="max-w-full max-h-[70vh] object-contain mx-auto" />;
     }
     if (mimeType === 'application/pdf') {
-      return <iframe src={fileUrl} title={file.name} className="w-full h-[75vh]" />;
+      return <iframe src={file.url} title={file.name} className="w-full h-[75vh]" />;
     }
     if (mimeType.startsWith('audio/')) {
-      return <audio controls src={fileUrl} className="w-full">Tarayıcınız ses öğesini desteklemiyor.</audio>;
+      return <audio controls src={file.url} className="w-full">Tarayıcınız ses öğesini desteklemiyor.</audio>;
     }
     if (mimeType.startsWith('video/')) {
-      return <video controls src={fileUrl} className="max-w-full max-h-[70vh]">Tarayıcınız video öğesini desteklemiyor.</video>;
+      return <video controls src={file.url} className="max-w-full max-h-[70vh]">Tarayıcınız video öğesini desteklemiyor.</video>;
     }
     if (mimeType.startsWith('text/')) {
       return <pre className="whitespace-pre-wrap bg-gray-100 p-4 rounded-md text-sm max-h-[70vh] overflow-auto">{textContent}</pre>;

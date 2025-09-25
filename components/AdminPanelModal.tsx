@@ -45,9 +45,8 @@ const TeamManagement: React.FC = () => {
             name: newMemberName,
             email: newMemberEmail,
             role: newMemberRole,
-            password: newMemberPassword,
             avatarUrl: `https://i.pravatar.cc/150?u=${crypto.randomUUID()}`,
-        });
+        }, newMemberPassword);
         setNewMemberName('');
         setNewMemberEmail('');
         setNewMemberRole(MemberRole.MEMBER);
@@ -170,6 +169,7 @@ const TeamManagement: React.FC = () => {
             </div>
             <div>
                 <h3 className="text-lg font-medium text-gray-800">Yeni Üye Ekle</h3>
+                 <p className="text-sm text-gray-500 mt-1">Not: Bu demo, Firebase Auth'a yeni kullanıcılar oluşturmaz, yalnızca Firestore veritabanına ekler. Var olan kullanıcı bilgileriyle giriş yapılmalıdır.</p>
                 <form onSubmit={handleAddMember} className="mt-4 flex flex-col sm:flex-row gap-4 flex-wrap items-start">
                     <input type="text" placeholder="İsim" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} className="flex-grow px-3 py-2 border border-gray-300 rounded-md bg-gray-50" />
                     <input type="email" placeholder="E-posta" value={newMemberEmail} onChange={(e) => setNewMemberEmail(e.target.value)} className="flex-grow px-3 py-2 border border-gray-300 rounded-md bg-gray-50" />
@@ -192,6 +192,10 @@ const TeamManagement: React.FC = () => {
 const BoardSettings: React.FC = () => {
     const { columnNames, updateColumnNames } = useKanbanStore();
     const [localNames, setLocalNames] = useState(columnNames);
+
+    useEffect(() => {
+        setLocalNames(columnNames);
+    }, [columnNames]);
 
     const handleSaveSettings = () => {
         updateColumnNames(localNames);
@@ -226,20 +230,10 @@ const BoardSettings: React.FC = () => {
 }
 
 const DataManagement: React.FC<{onClose: () => void}> = ({onClose}) => {
-    const { clearAllTasks, resetBoard } = useKanbanStore();
+    const { showToast } = useToast();
 
-    const handleClearTasks = () => {
-        if (window.confirm('Tüm görevleri silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) {
-            clearAllTasks();
-        }
-    };
-
-    const handleResetBoard = () => {
-        if (window.confirm('Tüm panoyu sıfırlamak istediğinizden emin misiniz? Bu, tüm görevleri ve üyeleri silecek ve başlangıçtaki örnek verileri geri yükleyecektir.')) {
-            resetBoard().then(() => {
-                onClose();
-            });
-        }
+    const handleAction = () => {
+        showToast("Bu eylem, Firebase'e geçiş nedeniyle devre dışı bırakıldı ve bir arka uç işlemi gerektirir.", "warning");
     };
 
     return (
@@ -247,8 +241,8 @@ const DataManagement: React.FC<{onClose: () => void}> = ({onClose}) => {
             <h3 className="text-lg font-medium text-red-700">Tehlikeli Bölge</h3>
             <p className="text-sm text-gray-500 mt-1">Bu işlemler geri alınamaz. Lütfen dikkatli olun.</p>
             <div className="mt-4 flex flex-col md:flex-row gap-4">
-                <button onClick={handleClearTasks} className="px-4 py-2 w-full text-white bg-red-600 rounded-md hover:bg-red-700">Tüm Görevleri Temizle</button>
-                <button onClick={handleResetBoard} className="px-4 py-2 w-full text-white bg-red-800 rounded-md hover:bg-red-900">Panoyu Varsayılana Sıfırla</button>
+                <button onClick={handleAction} className="px-4 py-2 w-full text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50">Tüm Görevleri Temizle</button>
+                <button onClick={handleAction} className="px-4 py-2 w-full text-white bg-red-800 rounded-md hover:bg-red-900 disabled:opacity-50">Panoyu Varsayılana Sıfırla</button>
             </div>
         </div>
     );

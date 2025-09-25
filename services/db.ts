@@ -1,151 +1,101 @@
-import { IDBPCursorWithValue, IDBPDatabase, openDB } from 'idb';
-import { Task, Member, Attachment, VoiceNote, BoardConfig, Notification, MemberRole } from '../types';
-import { DB_CONFIG, TEAM_MEMBERS_SEED, TASKS_SEED, BOARD_CONFIG_ID, DEFAULT_COLUMN_NAMES } from '../constants';
+import { collection, getDocs, getDoc, doc, setDoc, deleteDoc, writeBatch, query, where, documentId } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { db, storage } from './firebase';
+import { Task, Member, BoardConfig, Notification } from '../types';
 
-const { DB_NAME, DB_VERSION, STORES } = DB_CONFIG;
-
-let dbPromise: Promise<IDBPDatabase> | null = null;
-
-const getDb = (): Promise<IDBPDatabase> => {
-  if (!dbPromise) {
-    dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db, oldVersion, newVersion, tx) {
-        if (!db.objectStoreNames.contains(STORES.TASKS)) {
-          db.createObjectStore(STORES.TASKS, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(STORES.MEMBERS)) {
-          db.createObjectStore(STORES.MEMBERS, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(STORES.ATTACHMENTS)) {
-          db.createObjectStore(STORES.ATTACHMENTS, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(STORES.VOICE_NOTES)) {
-          db.createObjectStore(STORES.VOICE_NOTES, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(STORES.CONFIG)) {
-            db.createObjectStore(STORES.CONFIG, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(STORES.AVATARS)) {
-            db.createObjectStore(STORES.AVATARS, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(STORES.NOTIFICATIONS)) {
-            db.createObjectStore(STORES.NOTIFICATIONS, { keyPath: 'id' });
-        }
-        
-        // Seed data atomically on database creation
-        if (oldVersion === 0) {
-            console.log('Database created for the first time. Seeding initial data...');
-            const now = new Date().toISOString();
-            
-            // Seed Members
-            const memberStore = tx.objectStore(STORES.MEMBERS);
-            const seededMembers: Member[] = TEAM_MEMBERS_SEED.map(memberSeed => ({
-                ...memberSeed,
-                id: crypto.randomUUID(),
-                createdAt: now,
-                updatedAt: now,
-            }));
-            seededMembers.forEach(member => memberStore.add(member));
-            console.log(`${seededMembers.length} members seeded.`);
-
-            // Seed Tasks
-            const taskStore = tx.objectStore(STORES.TASKS);
-            const seededTasks: Task[] = TASKS_SEED.map(taskSeed => {
-                const creator = seededMembers[Math.floor(Math.random() * seededMembers.length)];
-                const responsible = seededMembers[Math.floor(Math.random() * seededMembers.length)];
-                const assignees = new Set<Member>([responsible]);
-                while (assignees.size < Math.floor(Math.random() * 3) + 1) {
-                    assignees.add(seededMembers[Math.floor(Math.random() * seededMembers.length)]);
-                }
-                return {
-                    ...taskSeed,
-                    id: crypto.randomUUID(),
-                    creatorId: creator.id,
-                    responsibleId: responsible.id,
-                    assigneeIds: Array.from(assignees).map(m => m.id),
-                    createdAt: now,
-                    updatedAt: now,
-                };
-            });
-            seededTasks.forEach(task => taskStore.add(task));
-            console.log(`${seededTasks.length} tasks seeded.`);
-            
-            // Seed Config
-            const configStore = tx.objectStore(STORES.CONFIG);
-            const boardConfig: BoardConfig = { id: BOARD_CONFIG_ID, columnNames: DEFAULT_COLUMN_NAMES };
-            configStore.add(boardConfig);
-            console.log('Board config seeded.');
-        }
-      },
-    });
-  }
-  return dbPromise;
-};
+// Collection names
+const TASKS_COLLECTION = 'tasks';
+const MEMBERS_COLLECTION = 'users'; // Using 'users' as a more standard collection name for members
+const CONFIG_COLLECTION = 'config';
+const NOTIFICATIONS_COLLECTION = 'notifications';
 
 // Generic CRUD operations
-const getAll = async <T,>(storeName: string): Promise<T[]> => {
-  const db = await getDb();
-  return db.getAll(storeName);
+const getAll = async <T,>(collectionName: string): Promise<T[]> => {
+  const querySnapshot = await getDocs(collection(db, collectionName));
+  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as T));
 };
 
-const get = async <T,>(storeName: string, id: string): Promise<T | undefined> => {
-    const db = await getDb();
-    return db.get(storeName, id);
+const get = async <T,>(collectionName: string, id: string): Promise<T | undefined> => {
+    const docRef = doc(db, collectionName, id);
+    const docSnap = await getDoc(docRef);
+    return docSnap.exists() ? { id: docSnap.id, ...docSnap.data() } as T : undefined;
 };
 
-const put = async <T,>(storeName: string, item: T): Promise<void> => {
-  const db = await getDb();
-  await db.put(storeName, item);
+const put = async <T extends {id: string}>(collectionName: string, item: T): Promise<void> => {
+  const docRef = doc(db, collectionName, item.id);
+  await setDoc(docRef, item);
 };
 
-const remove = async (storeName: string, id: string): Promise<void> => {
-    const db = await getDb();
-    await db.delete(storeName, id);
+const remove = async (collectionName: string, id: string): Promise<void> => {
+    const docRef = doc(db, collectionName, id);
+    await deleteDoc(docRef);
 };
-
-export const dbClearStore = async (storeName: string): Promise<void> => {
-    const db = await getDb();
-    await db.clear(storeName);
-};
-
 
 // Task specific operations
-export const dbGetTasks = () => getAll<Task>(STORES.TASKS);
-export const dbGetTask = (id: string) => get<Task>(STORES.TASKS, id);
-export const dbPutTask = (task: Task) => put(STORES.TASKS, task);
-export const dbDeleteTask = (id: string) => remove(STORES.TASKS, id);
-export const dbClearTasks = () => dbClearStore(STORES.TASKS);
+export const dbGetTasks = () => getAll<Task>(TASKS_COLLECTION);
+export const dbGetTask = (id: string) => get<Task>(TASKS_COLLECTION, id);
+export const dbPutTask = (task: Task) => put(TASKS_COLLECTION, task);
+export const dbDeleteTask = (id: string) => remove(TASKS_COLLECTION, id);
 
 // Notification specific operations
-export const dbGetNotifications = () => getAll<Notification>(STORES.NOTIFICATIONS);
-export const dbPutNotification = (notification: Notification) => put(STORES.NOTIFICATIONS, notification);
+export const dbGetNotificationsForUser = async (userId: string): Promise<Notification[]> => {
+  const q = query(collection(db, NOTIFICATIONS_COLLECTION), where("recipientId", "==", userId));
+  const querySnapshot = await getDocs(q);
+  return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Notification));
+}
+export const dbPutNotification = (notification: Notification) => put(NOTIFICATIONS_COLLECTION, notification);
 export const dbDeleteNotifications = async (ids: string[]): Promise<void> => {
-  const db = await getDb();
-  const tx = db.transaction(STORES.NOTIFICATIONS, 'readwrite');
-  await Promise.all(ids.map(id => tx.store.delete(id)));
-  await tx.done;
+    if (ids.length === 0) return;
+    const batch = writeBatch(db);
+    ids.forEach(id => {
+        batch.delete(doc(db, NOTIFICATIONS_COLLECTION, id));
+    });
+    await batch.commit();
 };
-export const dbClearNotifications = () => dbClearStore(STORES.NOTIFICATIONS);
+export const dbGetNotificationsByTaskId = async (taskId: string): Promise<Notification[]> => {
+    const q = query(collection(db, NOTIFICATIONS_COLLECTION), where("taskId", "==", taskId));
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Notification));
+}
 
 
 // Member specific operations
-export const dbGetMembers = () => getAll<Member>(STORES.MEMBERS);
-export const dbPutMember = (member: Member) => put<Member>(STORES.MEMBERS, member);
-export const dbDeleteMember = (id: string) => remove(STORES.MEMBERS, id);
-export const dbClearMembers = () => dbClearStore(STORES.MEMBERS);
-
-// Blob storage for attachments and voice notes
-export const dbPutBlob = (storeName: string, id: string, blob: Blob) => {
-    return put(storeName, { id, blob });
+export const dbGetMembers = () => getAll<Member>(MEMBERS_COLLECTION);
+export const dbGetMember = (id: string) => get<Member>(MEMBERS_COLLECTION, id);
+export const dbPutMember = (member: Member) => put<Member>(MEMBERS_COLLECTION, member);
+export const dbDeleteMember = (id: string) => remove(MEMBERS_COLLECTION, id);
+export const dbGetMemberByEmail = async (email: string): Promise<Member | undefined> => {
+    const q = query(collection(db, MEMBERS_COLLECTION), where("email", "==", email));
+    const querySnapshot = await getDocs(q);
+    if (querySnapshot.empty) {
+        return undefined;
+    }
+    const docSnap = querySnapshot.docs[0];
+    return { id: docSnap.id, ...docSnap.data() } as Member;
 };
 
-export const dbGetBlob = async (storeName: string, id: string): Promise<Blob | undefined> => {
-    const result = await get<{id: string, blob: Blob}>(storeName, id);
-    return result?.blob;
-}
 
-export const dbDeleteBlob = (storeName: string, id: string) => remove(storeName, id);
+// File storage for attachments, voice notes, and avatars
+export const dbUploadFile = async (path: string, file: Blob): Promise<string> => {
+    const storageRef = ref(storage, path);
+    await uploadBytes(storageRef, file);
+    return getDownloadURL(storageRef);
+};
+
+export const dbDeleteFile = async (path: string): Promise<void> => {
+    try {
+        const storageRef = ref(storage, path);
+        await deleteObject(storageRef);
+    } catch (error: any) {
+        // It's okay if the file doesn't exist (e.g., already deleted).
+        if (error.code !== 'storage/object-not-found') {
+            console.error("Error deleting file from storage:", error);
+            throw error;
+        }
+    }
+};
+
 
 // Config specific operations
-export const dbGetConfig = (id: string) => get<BoardConfig>(STORES.CONFIG, id);
-export const dbPutConfig = (config: BoardConfig) => put<BoardConfig>(STORES.CONFIG, config);
+export const dbGetConfig = (id: string) => get<BoardConfig>(CONFIG_COLLECTION, id);
+export const dbPutConfig = (config: BoardConfig) => put<BoardConfig>(CONFIG_COLLECTION, config);
