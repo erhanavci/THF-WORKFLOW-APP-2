@@ -2,15 +2,12 @@ import React, { useState, useRef, useEffect } from 'react';
 import { VoiceNote } from '../types';
 import { formatDuration, downloadBlob } from '../utils/helpers';
 import { useToast } from '../hooks/useToast';
-import { dbGetBlob } from '../services/db';
-import { DB_CONFIG } from '../constants';
 
 interface VoiceRecorderProps {
   currentVoiceNotes: VoiceNote[];
   newVoiceNotes: {blob: Blob, durationMs: number, id: string}[];
   onNewVoiceNotesChange: (notes: {blob: Blob, durationMs: number, id: string}[]) => void;
   onCurrentVoiceNotesChange: (notes: VoiceNote[]) => void;
-  // FIX: Changed type to allow functional updates for state.
   onVoiceNotesToRemoveChange: React.Dispatch<React.SetStateAction<VoiceNote[]>>;
 }
 
@@ -49,11 +46,10 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
     audio.addEventListener('ended', handleEnded);
     audio.addEventListener('pause', handlePause);
 
-    // Cleanup on component unmount
     return () => {
       audio.removeEventListener('ended', handleEnded);
       audio.removeEventListener('pause', handlePause);
-      if (currentAudioUrlRef.current) {
+      if (currentAudioUrlRef.current && currentAudioUrlRef.current.startsWith('blob:')) {
         URL.revokeObjectURL(currentAudioUrlRef.current);
       }
     };
@@ -112,7 +108,7 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
     setPlayingNoteId(null);
   }
   
-  const playBlob = (blob: Blob, noteId: string) => {
+  const playUrl = (url: string, noteId: string) => {
     const audio = audioPlayerRef.current;
     if (!audio) return;
 
@@ -121,40 +117,44 @@ const VoiceRecorder: React.FC<VoiceRecorderProps> = ({ currentVoiceNotes, newVoi
         return;
     }
     
-    if (currentAudioUrlRef.current) {
+    if (currentAudioUrlRef.current && currentAudioUrlRef.current.startsWith('blob:')) {
         URL.revokeObjectURL(currentAudioUrlRef.current);
     }
 
-    const url = URL.createObjectURL(blob);
     currentAudioUrlRef.current = url;
     audio.src = url;
 
     audio.play().catch(e => {
         console.error("Audio playback failed:", e);
-        showToast("Ses oynatılamadı. İşlem desteklenmiyor.", "error");
-        URL.revokeObjectURL(url);
+        showToast("Ses oynatılamadı.", "error");
+        if (url.startsWith('blob:')) URL.revokeObjectURL(url);
         currentAudioUrlRef.current = null;
         setPlayingNoteId(null);
     });
     setPlayingNoteId(noteId);
-  };
+  }
+
+  const playBlob = (blob: Blob, noteId: string) => {
+    const url = URL.createObjectURL(blob);
+    playUrl(url, noteId);
+  }
 
   const playCurrentVoiceNote = async (note: VoiceNote) => {
     if (playingNoteId === note.id) {
         stopPlayback();
         return;
     }
-    const blob = await dbGetBlob(DB_CONFIG.STORES.VOICE_NOTES, note.blobKey);
-    if(blob) {
-      playBlob(blob, note.id);
-    } else {
-      showToast("Sesli not yüklenemedi.", "error");
-    }
+    playUrl(note.url, note.id);
   }
 
   const downloadCurrentVoiceNote = async (note: VoiceNote) => {
-    const blob = await dbGetBlob(DB_CONFIG.STORES.VOICE_NOTES, note.blobKey);
-    if(blob) downloadBlob(blob, `seslinot-${note.id}.webm`);
+    try {
+        const response = await fetch(note.url);
+        const blob = await response.blob();
+        downloadBlob(blob, `seslinot-${note.id}.webm`);
+    } catch(err) {
+        showToast("Sesli not indirilemedi.", "error");
+    }
   }
 
   return (

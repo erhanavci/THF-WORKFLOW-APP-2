@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-// FIX: Corrected import for KanbanProvider as the file was missing content.
 import { KanbanProvider } from './context/KanbanContext';
 import Board from './components/Board';
 import Header from './components/Header';
@@ -8,7 +7,6 @@ import AdminPanelModal from './components/AdminPanelModal';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { useKanbanStore } from './hooks/useKanbanStore';
-// FIX: Corrected import for UserSignIn as the file was missing content.
 import UserSignIn from './components/UserSignIn';
 
 const AuthGate: React.FC = () => {

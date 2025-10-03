@@ -1,5 +1,3 @@
-// FIX: The original file had incorrect imports causing type conflicts and undefined types.
-// This was fixed by removing the faulty import and export statements, and defining the 'ID' type.
 export type ID = string;
 
 export enum MemberRole {
@@ -38,10 +36,8 @@ export interface Member {
   id: ID;
   name: string;
   email: string;
-  password?: string;
   role: MemberRole;
   avatarUrl?: string;
-  avatarBlobKey?: ID;
   createdAt: string; // ISO
   updatedAt: string; // ISO
 };
@@ -51,13 +47,13 @@ export interface Attachment {
   fileName: string;
   mimeType: string;
   sizeBytes: number;
-  blobKey: ID;        // key to retrieve blob from IndexedDB
+  url: string;        // Firebase Storage URL
   createdAt: string;
 };
 
 export interface VoiceNote {
   id: ID;
-  blobKey: ID;        // key to retrieve audio blob
+  url: string;        // Firebase Storage URL
   durationMs: number;
   createdAt: string;
 };

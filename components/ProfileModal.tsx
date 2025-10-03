@@ -4,6 +4,8 @@ import { useKanbanStore } from '../hooks/useKanbanStore';
 import { Member } from '../types';
 import Avatar from './Avatar';
 import { useToast } from '../hooks/useToast';
+import { auth } from '../services/firebase';
+import { updatePassword as firebaseUpdatePassword, EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 
 interface ProfileModalProps {
   onClose: () => void;
@@ -14,6 +16,7 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
   const { showToast } = useToast();
   
   const [editableUser, setEditableUser] = useState<Member | null>(currentUser);
+  const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [newAvatarFile, setNewAvatarFile] = useState<File | null>(null);
@@ -41,24 +44,46 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
     e.target.value = '';
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editableUser.name.trim()) {
       showToast('İsim alanı boş bırakılamaz.', 'error');
       return;
     }
-    if (newPassword && newPassword !== confirmPassword) {
-      showToast('Şifreler eşleşmiyor.', 'error');
-      return;
-    }
     
-    let userToUpdate = { ...editableUser };
-    if (newPassword) {
-        userToUpdate.password = newPassword;
-    }
+    try {
+        // Update name/avatar first
+        await updateMember(editableUser, newAvatarFile ?? undefined);
 
-    updateMember(userToUpdate, newAvatarFile ?? undefined);
-    onClose();
+        // Handle password change if requested
+        if (newPassword) {
+            if (newPassword !== confirmPassword) {
+              showToast('Yeni şifreler eşleşmiyor.', 'error');
+              return;
+            }
+            if (!currentPassword) {
+              showToast('Şifre değişikliği için mevcut şifrenizi girmeniz gereklidir.', 'error');
+              return;
+            }
+            
+            const user = auth.currentUser;
+            if (user && user.email) {
+                const credential = EmailAuthProvider.credential(user.email, currentPassword);
+                await reauthenticateWithCredential(user, credential);
+                await firebaseUpdatePassword(user, newPassword);
+                showToast('Şifre başarıyla güncellendi.', 'success');
+            }
+        }
+        
+        onClose();
+    } catch(error: any) {
+        console.error("Profile update failed:", error);
+        if (error.code === 'auth/wrong-password') {
+             showToast('Mevcut şifre yanlış.', 'error');
+        } else {
+             showToast('Profil güncellenemedi.', 'error');
+        }
+    }
   };
   
   const handleToggleNotifications = () => {
@@ -116,7 +141,11 @@ const ProfileModal: React.FC<ProfileModalProps> = ({ onClose }) => {
             <input type="text" id="name" name="name" value={editableUser.name} onChange={handleInputChange} className={inputStyles} />
           </div>
           <div>
-            <label htmlFor="newPassword" className={labelStyles}>Yeni Şifre (Değiştirmek için doldurun)</label>
+            <label htmlFor="currentPassword" className={labelStyles}>Mevcut Şifre (Şifre değiştirmek için gereklidir)</label>
+            <input type="password" id="currentPassword" name="currentPassword" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} className={inputStyles} />
+          </div>
+          <div>
+            <label htmlFor="newPassword" className={labelStyles}>Yeni Şifre</label>
             <input type="password" id="newPassword" name="newPassword" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} className={inputStyles} />
           </div>
           <div>

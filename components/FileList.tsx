@@ -1,8 +1,6 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { Attachment } from '../types';
 import { formatFileSize, downloadBlob } from '../utils/helpers';
-import { dbGetBlob } from '../services/db';
-import { DB_CONFIG } from '../constants';
 import FilePreviewModal from './FilePreviewModal';
 import { useToast } from '../hooks/useToast';
 
@@ -33,21 +31,12 @@ const Thumbnail: React.FC<ThumbnailProps> = ({ file, attachment, onClick }) => {
     useEffect(() => {
         let objectUrl: string | null = null;
 
-        const generateUrl = async () => {
-            let blob: Blob | undefined;
-            if (file) {
-                blob = file;
-            } else if (attachment) {
-                blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
-            }
-
-            if (blob) {
-                objectUrl = URL.createObjectURL(blob);
-                setPreviewUrl(objectUrl);
-            }
-        };
-
-        generateUrl();
+        if (file) {
+            objectUrl = URL.createObjectURL(file);
+            setPreviewUrl(objectUrl);
+        } else if (attachment) {
+            setPreviewUrl(attachment.url);
+        }
 
         return () => {
             if (objectUrl) {
@@ -80,13 +69,12 @@ interface FileListProps {
   newAttachments: {file: File, id: string}[];
   onNewAttachmentsChange: (files: {file: File, id: string}[]) => void;
   onCurrentAttachmentsChange: (attachments: Attachment[]) => void;
-  // FIX: Changed type to allow functional updates for state.
   onAttachmentsToRemoveChange: React.Dispatch<React.SetStateAction<Attachment[]>>;
 }
 
 const FileList: React.FC<FileListProps> = ({ currentAttachments, newAttachments, onNewAttachmentsChange, onCurrentAttachmentsChange, onAttachmentsToRemoveChange }) => {
   const { showToast } = useToast();
-  const [previewFile, setPreviewFile] = useState<{ name: string; type: string; blob: Blob } | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ name: string; type: string; url: string } | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -105,23 +93,23 @@ const FileList: React.FC<FileListProps> = ({ currentAttachments, newAttachments,
   };
 
   const handleDownload = async (attachment: Attachment) => {
-    const blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
-    if(blob) {
+    try {
+        const response = await fetch(attachment.url);
+        const blob = await response.blob();
         downloadBlob(blob, attachment.fileName);
+    } catch (error) {
+        console.error("Failed to download file:", error);
+        showToast("Dosya indirilemedi.", "error");
     }
   }
 
-  const handlePreviewCurrent = async (attachment: Attachment) => {
-    const blob = await dbGetBlob(DB_CONFIG.STORES.ATTACHMENTS, attachment.blobKey);
-    if (blob) {
-      setPreviewFile({ name: attachment.fileName, type: attachment.mimeType, blob });
-    } else {
-      showToast('Önizleme için ek yüklenemedi.', 'error');
-    }
+  const handlePreviewCurrent = (attachment: Attachment) => {
+    setPreviewFile({ name: attachment.fileName, type: attachment.mimeType, url: attachment.url });
   };
 
   const handlePreviewNew = (file: File) => {
-    setPreviewFile({ name: file.name, type: file.type, blob: file });
+     const url = URL.createObjectURL(file);
+    setPreviewFile({ name: file.name, type: file.type, url });
   };
 
 

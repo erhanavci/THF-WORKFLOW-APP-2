@@ -8,6 +8,8 @@ import FileList from './FileList';
 import VoiceRecorder from './VoiceRecorder';
 import { formatDateTime } from '../utils/helpers';
 import Avatar from './Avatar';
+import { SparkleIcon } from './icons/Icons';
+import { generateTaskSuggestions } from '../services/ai';
 
 interface TaskModalProps {
   task?: Task;
@@ -38,6 +40,7 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, onClose }) => {
   const [newNoteContent, setNewNoteContent] = useState('');
 
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const [isAiLoading, setIsAiLoading] = useState(false);
 
   // Permission checks
   const isUserAdmin = currentUser?.role === MemberRole.ADMIN;
@@ -84,6 +87,37 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, onClose }) => {
           showToast('Görev silinemedi.', 'error');
         }
       }
+    }
+  };
+
+  const handleAiAssist = async () => {
+    if (!title.trim()) {
+        showToast('Lütfen AI asistanını kullanmak için bir başlık girin.', 'warning');
+        return;
+    }
+    setIsAiLoading(true);
+    try {
+        const result = await generateTaskSuggestions(title);
+        
+        let newDescription = result.description;
+        if (result.subtasks && result.subtasks.length > 0) {
+            const subtaskMarkdown = result.subtasks.map(sub => `- [ ] ${sub}`).join('\n');
+            newDescription += `\n\n**Önerilen Alt Görevler:**\n${subtaskMarkdown}`;
+        }
+
+        setDescription(currentDesc => {
+            if(currentDesc.trim()) {
+                return `${currentDesc}\n\n---\n\n${newDescription}`;
+            }
+            return newDescription;
+        });
+
+        showToast('AI tarafından öneriler oluşturuldu!', 'success');
+    } catch (error) {
+        console.error(error);
+        showToast('AI yardımcısından öneri alınamadı.', 'error');
+    } finally {
+        setIsAiLoading(false);
     }
   };
 
@@ -143,7 +177,26 @@ const TaskModal: React.FC<TaskModalProps> = ({ task, onClose }) => {
           {/* Main content */}
           <div className="md:col-span-2 space-y-6">
             <div>
-              <label htmlFor="title" className={labelStyles}>Başlık</label>
+                <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="title" className={labelStyles}>Başlık</label>
+                     <button 
+                        type="button" 
+                        onClick={handleAiAssist} 
+                        disabled={isAiLoading || !canEditContent}
+                        className="flex items-center gap-1.5 px-2 py-1 text-xs font-semibold text-sky-700 bg-sky-100 rounded-md hover:bg-sky-200 disabled:bg-gray-200 disabled:text-gray-500 disabled:cursor-not-allowed transition-colors"
+                        title="AI Asistanı ile doldur"
+                    >
+                        {isAiLoading ? (
+                            <svg className="animate-spin h-4 w-4 text-sky-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                        ) : (
+                            <SparkleIcon className="w-4 h-4" />
+                        )}
+                        <span>AI Asistanı</span>
+                    </button>
+                </div>
               <input type="text" id="title" value={title} onChange={(e) => setTitle(e.target.value)} className={inputStyles} readOnly={!canEditContent} />
               {errors.title && <p className="text-red-500 text-xs mt-1">{errors.title}</p>}
               {!canEditContent && <p className="text-xs text-gray-500 mt-1">Bu görevi siz oluşturmadığınız için başlığı düzenleyemezsiniz.</p>}

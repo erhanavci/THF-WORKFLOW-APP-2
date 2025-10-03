@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import Modal from './ui/Modal';
-import { dbGetTasks } from '../services/db';
 import { Task } from '../types';
 import { useKanbanStore } from '../hooks/useKanbanStore';
 import { formatDateTime } from '../utils/helpers';
 import Avatar from './Avatar';
 import { UndoIcon } from './icons/Icons';
+import { db } from '../services/firebase';
+import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 
 interface ArchiveModalProps {
   isOpen: boolean;
@@ -22,15 +23,19 @@ const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
     if (isOpen) {
       const fetchArchived = async () => {
         setLoading(true);
-        const allTasks = await dbGetTasks();
-        const archived = allTasks
-          .filter(task => task.isArchived && task.completedAt)
-          .sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
+        const q = query(
+            collection(db, "tasks"), 
+            where("isArchived", "==", true),
+            orderBy("completedAt", "desc")
+        );
+        const querySnapshot = await getDocs(q);
+        const archived = querySnapshot.docs.map(doc => ({id: doc.id, ...doc.data()} as Task));
+
         setArchivedTasks(archived);
         setLoading(false);
         // Automatically open the first month if available
-        if (archived.length > 0) {
-            const firstMonth = new Date(archived[0].completedAt!).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
+        if (archived.length > 0 && archived[0].completedAt) {
+            const firstMonth = new Date(archived[0].completedAt).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' });
             setOpenMonth(firstMonth);
         }
       };
@@ -39,7 +44,8 @@ const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
   }, [isOpen]);
 
   const groupedTasks = archivedTasks.reduce((acc, task) => {
-    const monthYear = new Date(task.completedAt!).toLocaleDateString('tr-TR', {
+    if (!task.completedAt) return acc;
+    const monthYear = new Date(task.completedAt).toLocaleDateString('tr-TR', {
       month: 'long',
       year: 'numeric',
     });
@@ -67,7 +73,6 @@ const ArchiveModal: React.FC<ArchiveModalProps> = ({ isOpen, onClose }) => {
           <p className="text-center text-gray-500">Arşiv yükleniyor...</p>
         ) : Object.keys(groupedTasks).length > 0 ? (
           <div className="space-y-3">
-            {/* FIX: Use Object.keys to iterate over groupedTasks to avoid type inference issues with Object.entries in some TypeScript configurations. */}
             {Object.keys(groupedTasks).map((monthYear) => {
               const tasks = groupedTasks[monthYear];
               return (

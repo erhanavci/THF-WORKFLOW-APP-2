@@ -12,7 +12,7 @@ interface AdminPanelModalProps {
 type AdminTab = 'dashboard' | 'team' | 'board' | 'data';
 
 const TeamManagement: React.FC = () => {
-    const { members, addMember, updateMember, deleteMember, currentUser } = useKanbanStore();
+    const { members, updateMember, deleteMember, currentUser, signUp } = useKanbanStore();
     const { showToast } = useToast();
 
     const [editingMember, setEditingMember] = useState<Member | null>(null);
@@ -22,11 +22,10 @@ const TeamManagement: React.FC = () => {
 
     const [newMemberName, setNewMemberName] = useState('');
     const [newMemberEmail, setNewMemberEmail] = useState('');
-    const [newMemberRole, setNewMemberRole] = useState<MemberRole>(MemberRole.MEMBER);
     const [newMemberPassword, setNewMemberPassword] = useState('');
 
 
-    const handleAddMember = (e: React.FormEvent) => {
+    const handleAddMember = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newMemberName.trim()) {
             showToast('Üye adı gereklidir.', 'error');
@@ -36,22 +35,18 @@ const TeamManagement: React.FC = () => {
             showToast('Geçerli bir e-posta adresi gereklidir.', 'error');
             return;
         }
-        if (!newMemberPassword.trim()) {
-            showToast('Şifre gereklidir.', 'error');
+        if (!newMemberPassword.trim() || newMemberPassword.length < 6) {
+            showToast('Şifre en az 6 karakter olmalıdır.', 'error');
             return;
         }
 
-        addMember({
-            name: newMemberName,
-            email: newMemberEmail,
-            role: newMemberRole,
-            password: newMemberPassword,
-            avatarUrl: `https://i.pravatar.cc/150?u=${crypto.randomUUID()}`,
-        });
-        setNewMemberName('');
-        setNewMemberEmail('');
-        setNewMemberRole(MemberRole.MEMBER);
-        setNewMemberPassword('');
+        const success = await signUp(newMemberName, newMemberEmail, newMemberPassword);
+        
+        if (success) {
+            setNewMemberName('');
+            setNewMemberEmail('');
+            setNewMemberPassword('');
+        }
     };
 
     const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -97,7 +92,7 @@ const TeamManagement: React.FC = () => {
             showToast("Kendinizi silemezsiniz.", "error");
             return;
         }
-        if (window.confirm(`${member.name} adlı üyeyi kaldırmak istediğinizden emin misiniz?`)) {
+        if (window.confirm(`${member.name} adlı üyeyi kaldırmak istediğinizden emin misiniz? Bu işlem, kullanıcının sisteme girişini engellemez, yalnızca veritabanından kaldırır.`)) {
             deleteMember(member.id);
         }
     };
@@ -174,14 +169,6 @@ const TeamManagement: React.FC = () => {
                     <input type="text" placeholder="İsim" value={newMemberName} onChange={(e) => setNewMemberName(e.target.value)} className="flex-grow px-3 py-2 border border-gray-300 rounded-md bg-gray-50" />
                     <input type="email" placeholder="E-posta" value={newMemberEmail} onChange={(e) => setNewMemberEmail(e.target.value)} className="flex-grow px-3 py-2 border border-gray-300 rounded-md bg-gray-50" />
                     <input type="password" placeholder="Şifre" value={newMemberPassword} onChange={(e) => setNewMemberPassword(e.target.value)} className="flex-grow px-3 py-2 border border-gray-300 rounded-md bg-gray-50" />
-                    <select
-                        value={newMemberRole}
-                        onChange={(e) => setNewMemberRole(e.target.value as MemberRole)}
-                        className="px-3 py-2 border border-gray-300 rounded-md bg-gray-50"
-                    >
-                        <option value={MemberRole.MEMBER}>Üye</option>
-                        <option value={MemberRole.ADMIN}>Yönetici</option>
-                    </select>
                     <button type="submit" className="px-4 py-2 text-white bg-blue-600 rounded-md hover:bg-blue-700">Üye Ekle</button>
                 </form>
             </div>
@@ -226,21 +213,19 @@ const BoardSettings: React.FC = () => {
 }
 
 const DataManagement: React.FC<{onClose: () => void}> = ({onClose}) => {
-    const { clearAllTasks, resetBoard } = useKanbanStore();
+    const { clearAllTasks } = useKanbanStore();
+    const { showToast } = useToast();
 
     const handleClearTasks = () => {
-        if (window.confirm('Tüm görevleri silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.')) {
+        if (window.confirm('Tüm görevleri silmek istediğinizden emin misiniz? Bu işlem geri alınamaz ve depolamadaki ilişkili dosyaları silmez.')) {
             clearAllTasks();
         }
     };
-
+    
     const handleResetBoard = () => {
-        if (window.confirm('Tüm panoyu sıfırlamak istediğinizden emin misiniz? Bu, tüm görevleri ve üyeleri silecek ve başlangıçtaki örnek verileri geri yükleyecektir.')) {
-            resetBoard().then(() => {
-                onClose();
-            });
-        }
+        showToast("Bu işlevsellik Firebase ile devre dışı bırakılmıştır.", "info");
     };
+
 
     return (
         <div className="p-4 border border-red-300 rounded-lg">
@@ -248,7 +233,7 @@ const DataManagement: React.FC<{onClose: () => void}> = ({onClose}) => {
             <p className="text-sm text-gray-500 mt-1">Bu işlemler geri alınamaz. Lütfen dikkatli olun.</p>
             <div className="mt-4 flex flex-col md:flex-row gap-4">
                 <button onClick={handleClearTasks} className="px-4 py-2 w-full text-white bg-red-600 rounded-md hover:bg-red-700">Tüm Görevleri Temizle</button>
-                <button onClick={handleResetBoard} className="px-4 py-2 w-full text-white bg-red-800 rounded-md hover:bg-red-900">Panoyu Varsayılana Sıfırla</button>
+                <button onClick={handleResetBoard} className="px-4 py-2 w-full text-white bg-red-800 rounded-md hover:bg-red-900 disabled:bg-gray-400" disabled>Panoyu Varsayılana Sıfırla</button>
             </div>
         </div>
     );

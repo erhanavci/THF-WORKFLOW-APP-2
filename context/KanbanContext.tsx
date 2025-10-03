@@ -1,36 +1,24 @@
-
-
-
 import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import {
-  Task,
-  Member,
-  ID,
-  TaskStatus,
-  FilterState,
-  Attachment,
-  VoiceNote,
-  MemberRole,
-  BoardConfig,
-  Notification,
-  NotificationType,
+  Task, Member, ID, TaskStatus, FilterState, Attachment, VoiceNote, MemberRole, BoardConfig, Notification, NotificationType,
 } from '../types';
-import * as db from '../services/db';
+import { auth, db, storage } from '../services/firebase';
 import {
-  TEAM_MEMBERS_SEED,
-  TASKS_SEED,
-  DB_CONFIG,
-  BOARD_CONFIG_ID,
-  DEFAULT_COLUMN_NAMES,
-} from '../constants';
+  onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut as firebaseSignOut,
+} from 'firebase/auth';
+import {
+  collection, doc, getDoc, getDocs, onSnapshot, writeBatch, query, where, Timestamp, setDoc, deleteDoc, updateDoc, addDoc, orderBy,
+} from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { useToast } from '../hooks/useToast';
 import { isOverdue } from '../utils/helpers';
+import { BOARD_CONFIG_ID, DEFAULT_COLUMN_NAMES } from '../constants';
+
 
 interface NotificationSettings {
   enabled: boolean;
 }
 
-// Define the shape of the context value
 interface IKanbanContext {
   tasks: Task[];
   members: Member[];
@@ -58,26 +46,22 @@ interface IKanbanContext {
   unarchiveTask: (taskId: ID) => Promise<void>;
   getMemberById: (id: ID) => Member | undefined;
   setFilters: (filters: FilterState) => void;
-  addMember: (memberData: Omit<Member, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  addMember: (memberData: Omit<Member, 'id' | 'createdAt' | 'updatedAt' | 'password'>) => Promise<void>;
   updateMember: (updatedMember: Member, newAvatar?: File) => Promise<void>;
   deleteMember: (memberId: ID) => Promise<void>;
   updateColumnNames: (newNames: Record<TaskStatus, string>) => Promise<void>;
   clearAllTasks: () => Promise<void>;
   resetBoard: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<boolean>;
+  signUp: (name: string, email: string, password: string) => Promise<boolean>;
   signOut: () => void;
   markNotificationAsRead: (notificationId: ID) => Promise<void>;
   markAllNotificationsAsRead: () => Promise<void>;
   updateNotificationSettings: (settings: NotificationSettings) => void;
 }
 
-// Create the context with a default value of undefined
 export const KanbanContext = createContext<IKanbanContext | undefined>(undefined);
 
-// Create a single BroadcastChannel for the application
-const channel = new BroadcastChannel('thf-workflow-sync');
-
-// Define the provider component
 export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -85,42 +69,29 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>({ enabled: true });
   const [columnNames, setColumnNames] = useState<Record<TaskStatus, string>>(DEFAULT_COLUMN_NAMES);
   const [filters, setFilters] = useState<FilterState>({
-    searchTerm: '',
-    assigneeIds: [],
-    responsibleId: undefined,
-    dueDate: null,
+    searchTerm: '', assigneeIds: [], responsibleId: undefined, dueDate: null,
   });
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState<Member | null>(null);
   const { showToast } = useToast();
 
   const getMemberById = useCallback((id: ID) => members.find(m => m.id === id), [members]);
-
-  const refreshNotifications = useCallback(async (user: Member) => {
-    const allNotifications = await db.dbGetNotifications();
-    const userNotifications = allNotifications
-      .filter(n => n.recipientId === user.id)
-      .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    setNotifications(userNotifications);
-  }, []);
-
+  
   const checkAndGenerateNotifications = useCallback(async (user: Member, currentTasks: Task[], currentNotifications: Notification[]) => {
       if (!notificationSettings.enabled) return;
       
-      const newNotifications: Notification[] = [];
-      const notificationsToDelete: ID[] = [];
+      const newNotifications: Omit<Notification, 'id'>[] = [];
+      const batch = writeBatch(db);
 
       const userTasks = currentTasks.filter(t => t.assigneeIds.includes(user.id));
       const doneTaskIds = new Set(currentTasks.filter(t => t.status === TaskStatus.DONE).map(t => t.id));
 
-      // Clean up notifications for tasks that are now done
       currentNotifications.forEach(n => {
           if (doneTaskIds.has(n.taskId) && (n.type === NotificationType.OVERDUE || n.type === NotificationType.DUE_SOON)) {
-              notificationsToDelete.push(n.id);
+              batch.delete(doc(db, "notifications", n.id));
           }
       });
       
-      // Generate new notifications for active tasks
       for (const task of userTasks) {
           if (task.status === TaskStatus.DONE) continue;
           
@@ -129,203 +100,138 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           const dueDate = task.dueDate ? new Date(task.dueDate).getTime() : 0;
           const timeUntilDue = dueDate - now;
 
-          // Overdue
           if (isOverdue(task.dueDate)) {
               const alreadyNotified = currentNotifications.some(n => n.taskId === task.id && n.type === NotificationType.OVERDUE && !n.isRead);
               if (!alreadyNotified) {
                   newNotifications.push({
-                      id: crypto.randomUUID(),
-                      recipientId: user.id,
-                      taskId: task.id,
-                      taskTitle: task.title,
-                      type: NotificationType.OVERDUE,
-                      message: `"${task.title}" görevinin son tarihi geçti.`,
-                      isRead: false,
-                      createdAt: new Date().toISOString(),
+                      recipientId: user.id, taskId: task.id, taskTitle: task.title, type: NotificationType.OVERDUE,
+                      message: `"${task.title}" görevinin son tarihi geçti.`, isRead: false, createdAt: new Date().toISOString(),
                   });
               }
           }
-          // Due soon
           else if (timeUntilDue > 0 && timeUntilDue <= twentyFourHours) {
               const alreadyNotified = currentNotifications.some(n => n.taskId === task.id && n.type === NotificationType.DUE_SOON && !n.isRead);
               if (!alreadyNotified) {
-                  newNotifications.push({
-                      id: crypto.randomUUID(),
-                      recipientId: user.id,
-                      taskId: task.id,
-                      taskTitle: task.title,
-                      type: NotificationType.DUE_SOON,
-                      message: `"${task.title}" görevinin son tarihi yaklaşıyor.`,
-                      isRead: false,
-                      createdAt: new Date().toISOString(),
+                   newNotifications.push({
+                      recipientId: user.id, taskId: task.id, taskTitle: task.title, type: NotificationType.DUE_SOON,
+                      message: `"${task.title}" görevinin son tarihi yaklaşıyor.`, isRead: false, createdAt: new Date().toISOString(),
                   });
               }
           }
       }
 
-      if (notificationsToDelete.length > 0) {
-        await db.dbDeleteNotifications(notificationsToDelete);
-        channel.postMessage({ type: 'data-changed', payload: 'notifications' });
-      }
-
       if (newNotifications.length > 0) {
-          for (const n of newNotifications) await db.dbPutNotification(n);
-          channel.postMessage({ type: 'data-changed', payload: 'notifications' });
+          newNotifications.forEach(n => {
+              const newNotifRef = doc(collection(db, "notifications"));
+              batch.set(newNotifRef, n);
+          });
       }
       
-      if (notificationsToDelete.length > 0 || newNotifications.length > 0) {
-          await refreshNotifications(user);
-      }
-  }, [notificationSettings.enabled, refreshNotifications]);
+      await batch.commit();
 
-  // Data initialization effect, runs only once on mount
+  }, [notificationSettings.enabled]);
+
   useEffect(() => {
-    const initializeApp = async () => {
-      setLoading(true);
-      try {
-        const savedSettings = localStorage.getItem('notificationSettings');
-        if (savedSettings) {
-          setNotificationSettings(JSON.parse(savedSettings));
+    const unsub = onAuthStateChanged(auth, async (user: User | null) => {
+      if (user) {
+        const memberDoc = await getDoc(doc(db, 'members', user.uid));
+        if (memberDoc.exists()) {
+          setCurrentUser({ id: memberDoc.id, ...memberDoc.data() } as Member);
+        } else {
+          // This case might happen if the user exists in Auth but not in Firestore.
+          // For a robust app, you might want to create the member doc here or sign them out.
+          setCurrentUser(null);
         }
-
-        // Seeding is now handled by db.ts on creation. We just need to load data.
-        
-        // Restore session if available
-        const loggedInUserEmail = sessionStorage.getItem('currentUserEmail');
-        if (loggedInUserEmail) {
-            const allMembers = await db.dbGetMembers();
-            const user = allMembers.find(m => m.email.toLowerCase() === loggedInUserEmail.toLowerCase());
-            if (user) {
-              const allTasks = await db.dbGetTasks();
-              const boardConfig = await db.dbGetConfig(BOARD_CONFIG_ID);
-              const activeTasks = allTasks.filter(t => !t.isArchived);
-              
-              setMembers(allMembers);
-              setTasks(activeTasks);
-              setColumnNames(boardConfig?.columnNames || DEFAULT_COLUMN_NAMES);
-              setCurrentUser(user);
-              await refreshNotifications(user);
-            }
-        }
-      } catch (error) {
-        console.error('Database initialization failed:', error);
-        showToast('Uygulama verileri yüklenemedi.', 'error');
-      } finally {
-        setLoading(false);
+      } else {
+        setCurrentUser(null);
       }
-    };
-    initializeApp();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+      setLoading(false);
+    });
+    return () => unsub();
   }, []);
-
-  const refreshAllData = useCallback(async (source?: string) => {
-    if (source) console.log(`[KanbanSync] Refreshing data due to: ${source}`);
-    try {
-      const [allTasks, allMembers, allNotifications, boardConfig] = await Promise.all([
-        db.dbGetTasks(),
-        db.dbGetMembers(),
-        db.dbGetNotifications(),
-        db.dbGetConfig(BOARD_CONFIG_ID)
-      ]);
-      
-      setTasks(allTasks.filter(t => !t.isArchived));
-      setMembers(allMembers);
-      setColumnNames(boardConfig?.columnNames || DEFAULT_COLUMN_NAMES);
-
-      const loggedInUserEmail = sessionStorage.getItem('currentUserEmail');
-      const latestCurrentUser = allMembers.find(m => m.email.toLowerCase() === loggedInUserEmail?.toLowerCase());
-
-      if (latestCurrentUser) {
-        setCurrentUser(latestCurrentUser);
-        const userNotifications = allNotifications
-          .filter(n => n.recipientId === latestCurrentUser.id)
-          .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setNotifications(userNotifications);
-      }
-    } catch (error) {
-      console.error("Failed to refresh data from DB:", error);
-      showToast("Veriler senkronize edilemedi.", "error");
-    }
-  }, [showToast]);
-
-  // Effect for real-time synchronization between tabs
+  
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-        if (event.data?.type === 'data-changed') {
-            refreshAllData(`broadcast message (${event.data.payload})`);
-        }
-    };
-    const handleVisibilityChange = () => {
-        if (document.visibilityState === 'visible') {
-            refreshAllData('tab became visible');
-        }
-    };
-    const handleFocus = () => refreshAllData('window focused');
+    if (!currentUser) {
+        setTasks([]);
+        setMembers([]);
+        setNotifications([]);
+        return;
+    }
 
-    channel.addEventListener('message', handleMessage);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
+    const unsubTasks = onSnapshot(query(collection(db, 'tasks'), where('isArchived', '!=', true)), (snapshot) => {
+        const activeTasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Task));
+        setTasks(activeTasks);
+    });
+
+    const unsubMembers = onSnapshot(collection(db, 'members'), (snapshot) => {
+        const allMembers = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Member));
+        setMembers(allMembers);
+    });
+    
+    const unsubNotifications = onSnapshot(
+        query(collection(db, 'notifications'), where('recipientId', '==', currentUser.id), orderBy('createdAt', 'desc')),
+        (snapshot) => {
+            const userNotifications = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Notification));
+            setNotifications(userNotifications);
+        }
+    );
+
+    const loadConfig = async () => {
+        const configDoc = await getDoc(doc(db, 'config', BOARD_CONFIG_ID));
+        if (configDoc.exists()) {
+            setColumnNames(configDoc.data().columnNames);
+        }
+    };
+    loadConfig();
 
     return () => {
-        channel.removeEventListener('message', handleMessage);
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-        window.removeEventListener('focus', handleFocus);
+        unsubTasks();
+        unsubMembers();
+        unsubNotifications();
     };
-  }, [refreshAllData]);
+  }, [currentUser]);
 
-  // Effect for checking and generating notifications when relevant data changes.
-  useEffect(() => {
+   useEffect(() => {
     if (loading || !currentUser) return;
-
-    const check = async () => {
-      const allNotifications = await db.dbGetNotifications();
-      const userNotifications = allNotifications.filter(n => n.recipientId === currentUser.id);
-      await checkAndGenerateNotifications(currentUser, tasks, userNotifications);
-    };
-
-    check();
-  }, [loading, currentUser, tasks, checkAndGenerateNotifications]);
+    checkAndGenerateNotifications(currentUser, tasks, notifications);
+  }, [loading, currentUser, tasks, notifications, checkAndGenerateNotifications]);
 
 
-  const processNewAttachments = async (newAttachments: { file: File; id: string }[]): Promise<Attachment[]> => {
+  const uploadFile = async (filePath: string, file: File | Blob): Promise<string> => {
+    const fileRef = ref(storage, filePath);
+    await uploadBytes(fileRef, file);
+    return await getDownloadURL(fileRef);
+  };
+
+  const processNewAttachments = async (taskId: string, newAttachments: { file: File; id: string }[]): Promise<Attachment[]> => {
     const processed: Attachment[] = [];
     for (const { file, id } of newAttachments) {
-      const blobKey = crypto.randomUUID();
-      await db.dbPutBlob(DB_CONFIG.STORES.ATTACHMENTS, blobKey, file);
+      const url = await uploadFile(`attachments/${taskId}/${id}-${file.name}`, file);
       processed.push({
-        id,
-        fileName: file.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        blobKey,
-        createdAt: new Date().toISOString(),
+        id, fileName: file.name, mimeType: file.type, sizeBytes: file.size, url, createdAt: new Date().toISOString(),
       });
     }
     return processed;
   };
 
-  const processNewVoiceNotes = async (newVoiceNotes: { blob: Blob; durationMs: number; id: string }[]): Promise<VoiceNote[]> => {
+  const processNewVoiceNotes = async (taskId: string, newVoiceNotes: { blob: Blob; durationMs: number; id: string }[]): Promise<VoiceNote[]> => {
     const processed: VoiceNote[] = [];
     for (const { blob, durationMs, id } of newVoiceNotes) {
-      const blobKey = crypto.randomUUID();
-      await db.dbPutBlob(DB_CONFIG.STORES.VOICE_NOTES, blobKey, blob);
-      processed.push({
-        id,
-        blobKey,
-        durationMs,
-        createdAt: new Date().toISOString(),
-      });
+      const url = await uploadFile(`voiceNotes/${taskId}/${id}.webm`, blob);
+      processed.push({ id, url, durationMs, createdAt: new Date().toISOString() });
     }
     return processed;
   };
 
-  const removeBlobs = async (attachmentsToRemove: Attachment[], voiceNotesToRemove: VoiceNote[]) => {
+  const removeFiles = async (attachmentsToRemove: Attachment[], voiceNotesToRemove: VoiceNote[]) => {
+    const promises = [];
     for (const att of attachmentsToRemove) {
-        await db.dbDeleteBlob(DB_CONFIG.STORES.ATTACHMENTS, att.blobKey);
+        if(att.url) promises.push(deleteObject(ref(storage, att.url)));
     }
     for (const note of voiceNotesToRemove) {
-        await db.dbDeleteBlob(DB_CONFIG.STORES.VOICE_NOTES, note.blobKey);
+        if(note.url) promises.push(deleteObject(ref(storage, note.url)));
     }
+    await Promise.all(promises).catch(err => console.error("Error deleting files from storage:", err));
   };
 
   const addTask = async (
@@ -335,44 +241,37 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   ) => {
     if (!currentUser) throw new Error("No user logged in");
     
-    const processedAttachments = await processNewAttachments(newAttachments);
-    const processedVoiceNotes = await processNewVoiceNotes(newVoiceNotes);
+    const newTaskRef = doc(collection(db, 'tasks'));
+    const taskId = newTaskRef.id;
 
-    const newTask: Task = {
+    const processedAttachments = await processNewAttachments(taskId, newAttachments);
+    const processedVoiceNotes = await processNewVoiceNotes(taskId, newVoiceNotes);
+
+    const newTask: Omit<Task, 'id'> = {
       ...taskData,
-      id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       creatorId: currentUser.id,
       attachments: processedAttachments,
       voiceNotes: processedVoiceNotes,
+      isArchived: false,
     };
     
-    let notificationsAdded = false;
+    await setDoc(newTaskRef, newTask);
+
     if (notificationSettings.enabled) {
+        const batch = writeBatch(db);
         for (const assigneeId of newTask.assigneeIds) {
             if (assigneeId !== currentUser.id) {
-                 const notification: Notification = {
-                    id: crypto.randomUUID(),
-                    recipientId: assigneeId,
-                    taskId: newTask.id,
-                    taskTitle: newTask.title,
-                    type: NotificationType.ASSIGNMENT,
+                 const notification: Omit<Notification, 'id'> = {
+                    recipientId: assigneeId, taskId: taskId, taskTitle: newTask.title, type: NotificationType.ASSIGNMENT,
                     message: `${currentUser.name} sizi "${newTask.title}" görevine atadı.`,
-                    isRead: false,
-                    createdAt: new Date().toISOString(),
+                    isRead: false, createdAt: new Date().toISOString(),
                 };
-                await db.dbPutNotification(notification);
-                notificationsAdded = true;
+                batch.set(doc(collection(db, "notifications")), notification);
             }
         }
-    }
-
-    await db.dbPutTask(newTask);
-    setTasks(prev => [...prev, newTask]);
-    channel.postMessage({ type: 'data-changed', payload: 'tasks' });
-    if (notificationsAdded) {
-        channel.postMessage({ type: 'data-changed', payload: 'notifications' });
+        await batch.commit();
     }
     showToast('Görev başarıyla oluşturuldu!', 'success');
   };
@@ -386,58 +285,52 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   ) => {
     if (!currentUser) throw new Error("No user logged in");
     
-    const originalTask = tasks.find(t => t.id === updatedTask.id) ?? await db.dbGetTask(updatedTask.id);
+    const originalTask = tasks.find(t => t.id === updatedTask.id);
     if (!originalTask) {
         showToast("Güncellenecek görev bulunamadı.", 'error');
         return;
     }
 
-    let notificationsAdded = false;
+    const taskRef = doc(db, 'tasks', updatedTask.id);
+    const batch = writeBatch(db);
+
     if (notificationSettings.enabled) {
         const oldAssignees = new Set(originalTask.assigneeIds);
         const newAssignees = updatedTask.assigneeIds.filter(id => !oldAssignees.has(id));
         for (const assigneeId of newAssignees) {
-            if (assigneeId !== currentUser.id) { // Don't notify for self-assignment
-                 const notification: Notification = {
-                    id: crypto.randomUUID(),
-                    recipientId: assigneeId,
-                    taskId: updatedTask.id,
-                    taskTitle: updatedTask.title,
-                    type: NotificationType.ASSIGNMENT,
+            if (assigneeId !== currentUser.id) {
+                 const notification: Omit<Notification, 'id'> = {
+                    recipientId: assigneeId, taskId: updatedTask.id, taskTitle: updatedTask.title, type: NotificationType.ASSIGNMENT,
                     message: `${currentUser.name} sizi "${updatedTask.title}" görevine atadı.`,
-                    isRead: false,
-                    createdAt: new Date().toISOString(),
+                    isRead: false, createdAt: new Date().toISOString(),
                 };
-                await db.dbPutNotification(notification);
-                notificationsAdded = true;
+                batch.set(doc(collection(db, "notifications")), notification);
             }
         }
     }
 
     let completedAt = originalTask.completedAt;
-    let notificationsRemoved = false;
     if (updatedTask.status !== originalTask.status) {
         if (updatedTask.status === TaskStatus.DONE) {
             completedAt = new Date().toISOString();
-            const userNotifications = await db.dbGetNotifications();
-            const notificationsToDelete = userNotifications
-                .filter(n => n.taskId === updatedTask.id && (n.type === NotificationType.DUE_SOON || n.type === NotificationType.OVERDUE))
-                .map(n => n.id);
-            if (notificationsToDelete.length > 0) {
-                await db.dbDeleteNotifications(notificationsToDelete);
-                if(currentUser) await refreshNotifications(currentUser);
-                notificationsRemoved = true;
-            }
+            const q = query(collection(db, "notifications"), where("taskId", "==", updatedTask.id));
+            const querySnapshot = await getDocs(q);
+            querySnapshot.forEach((docSnap) => {
+                const notif = docSnap.data() as Notification;
+                if(notif.type === NotificationType.DUE_SOON || notif.type === NotificationType.OVERDUE) {
+                    batch.delete(docSnap.ref);
+                }
+            });
         } else if (originalTask.status === TaskStatus.DONE) {
             completedAt = undefined;
         }
     }
 
-    const processedAttachments = await processNewAttachments(newAttachments);
-    const processedVoiceNotes = await processNewVoiceNotes(newVoiceNotes);
-    await removeBlobs(attachmentsToRemove, voiceNotesToRemove);
+    await removeFiles(attachmentsToRemove, voiceNotesToRemove);
+    const processedAttachments = await processNewAttachments(updatedTask.id, newAttachments);
+    const processedVoiceNotes = await processNewVoiceNotes(updatedTask.id, newVoiceNotes);
 
-    const finalTask = {
+    const finalTaskData = {
       ...updatedTask,
       completedAt,
       attachments: [...updatedTask.attachments, ...processedAttachments],
@@ -445,14 +338,12 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       updatedAt: new Date().toISOString(),
       updatedBy: currentUser.id,
     };
+    
+    delete (finalTaskData as any).id; // Do not write id inside the document
+    batch.update(taskRef, finalTaskData);
+    
+    await batch.commit();
 
-    await db.dbPutTask(finalTask);
-    const updatedTasks = tasks.map(t => t.id === finalTask.id ? finalTask : t);
-    setTasks(updatedTasks);
-    channel.postMessage({ type: 'data-changed', payload: 'tasks' });
-    if(notificationsAdded || notificationsRemoved) {
-      channel.postMessage({ type: 'data-changed', payload: 'notifications' });
-    }
     showToast('Görev başarıyla güncellendi!', 'success');
   };
   
@@ -460,13 +351,9 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const taskToDelete = tasks.find(t => t.id === taskId);
       if (!taskToDelete) return;
 
-      // Remove blobs
-      await removeBlobs(taskToDelete.attachments, taskToDelete.voiceNotes);
+      await removeFiles(taskToDelete.attachments, taskToDelete.voiceNotes);
+      await deleteDoc(doc(db, "tasks", taskId));
 
-      // Remove task
-      await db.dbDeleteTask(taskId);
-      setTasks(prev => prev.filter(t => t.id !== taskId));
-      channel.postMessage({ type: 'data-changed', payload: 'tasks' });
       showToast('Görev silindi.', 'info');
   };
 
@@ -474,124 +361,96 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
     const task = tasks.find(t => t.id === taskId);
     if (task && task.status !== newStatus && currentUser) {
       let completedAt = task.completedAt;
-      let notificationsRemoved = false;
       if (newStatus === TaskStatus.DONE) {
           completedAt = new Date().toISOString();
-          const userNotifications = await db.dbGetNotifications();
-          const notificationsToDelete = userNotifications
-              .filter(n => n.taskId === taskId && (n.type === NotificationType.DUE_SOON || n.type === NotificationType.OVERDUE))
-              .map(n => n.id);
-          if (notificationsToDelete.length > 0) {
-              await db.dbDeleteNotifications(notificationsToDelete);
-              await refreshNotifications(currentUser);
-              notificationsRemoved = true;
-          }
       } else if (task.status === TaskStatus.DONE) {
           completedAt = undefined;
       }
-      const updatedTask = { ...task, status: newStatus, updatedAt: new Date().toISOString(), updatedBy: currentUser.id, completedAt };
-      await db.dbPutTask(updatedTask);
-      setTasks(prev => prev.map(t => t.id === taskId ? updatedTask : t));
-      channel.postMessage({ type: 'data-changed', payload: 'tasks' });
-      if (notificationsRemoved) {
-          channel.postMessage({ type: 'data-changed', payload: 'notifications' });
+      const updateData = { status: newStatus, updatedAt: new Date().toISOString(), updatedBy: currentUser.id, completedAt };
+      await updateDoc(doc(db, "tasks", taskId), updateData);
+
+      if(newStatus === TaskStatus.DONE) {
+          const q = query(collection(db, "notifications"), where("taskId", "==", taskId));
+          const querySnapshot = await getDocs(q);
+          const batch = writeBatch(db);
+          querySnapshot.forEach((docSnap) => {
+              const notif = docSnap.data() as Notification;
+              if(notif.type === NotificationType.DUE_SOON || notif.type === NotificationType.OVERDUE) {
+                  batch.delete(docSnap.ref);
+              }
+          });
+          await batch.commit();
       }
     }
   };
   
   const archiveTasks = async (taskIds: ID[]) => {
-      const tasksToArchive = tasks.filter(t => taskIds.includes(t.id));
-      if (tasksToArchive.length === 0) return;
-
-      const updatedTasks: Task[] = [];
-      for(const task of tasksToArchive) {
-          const updated = { ...task, isArchived: true, completedAt: task.completedAt || new Date().toISOString() };
-          updatedTasks.push(updated);
-          await db.dbPutTask(updated);
-      }
-      
-      setTasks(prev => prev.filter(t => !taskIds.includes(t.id)));
-      channel.postMessage({ type: 'data-changed', payload: 'tasks' });
-      showToast(`${updatedTasks.length} görev arşivlendi.`, 'success');
+      const batch = writeBatch(db);
+      taskIds.forEach(id => {
+          const taskRef = doc(db, "tasks", id);
+          batch.update(taskRef, { isArchived: true, completedAt: new Date().toISOString() });
+      });
+      await batch.commit();
+      showToast(`${taskIds.length} görev arşivlendi.`, 'success');
   };
   
   const unarchiveTask = async (taskId: ID) => {
-      const task = await db.dbGetTask(taskId);
-      if (!task || !task.isArchived) return;
-
-      const updatedTask = { ...task, isArchived: false };
-      await db.dbPutTask(updatedTask);
-      setTasks(prev => [...prev, updatedTask].sort((a,b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()));
-      channel.postMessage({ type: 'data-changed', payload: 'tasks' });
+      await updateDoc(doc(db, "tasks", taskId), { isArchived: false });
       showToast('Görev arşive geri alındı.', 'success');
   };
   
-  const addMember = async (memberData: Omit<Member, 'id' | 'createdAt' | 'updatedAt'>) => {
-      const now = new Date().toISOString();
-      const newMember: Member = {
-          ...memberData,
-          id: crypto.randomUUID(),
-          createdAt: now,
-          updatedAt: now,
-      };
-      await db.dbPutMember(newMember);
-      setMembers(prev => [...prev, newMember]);
-      channel.postMessage({ type: 'data-changed', payload: 'members' });
-      showToast('Yeni üye eklendi.', 'success');
+  const addMember = async (memberData: Omit<Member, 'id' | 'createdAt' | 'updatedAt'| 'password'>) => {
+      // This function is for admin panel. Auth user creation should happen in signUp.
+      // This can create a member doc but they won't be able to log in without an Auth account.
+      // For this app's purpose, we'll assume admins add users via signUp.
+      // This function can be used to add member data if auth is handled separately.
+      showToast('Lütfen üyeleri kayıt sayfasından ekleyin.', 'info');
   };
 
   const updateMember = async (updatedMember: Member, newAvatar?: File) => {
       let finalMember = { ...updatedMember, updatedAt: new Date().toISOString() };
       
       if (newAvatar) {
-          const blobKey = updatedMember.avatarBlobKey || crypto.randomUUID();
-          await db.dbPutBlob(DB_CONFIG.STORES.AVATARS, blobKey, newAvatar);
-          finalMember.avatarBlobKey = blobKey;
-          finalMember.avatarUrl = undefined; // Prioritize blob over URL
+          const url = await uploadFile(`avatars/${finalMember.id}`, newAvatar);
+          finalMember.avatarUrl = url;
       }
 
-      await db.dbPutMember(finalMember);
-      setMembers(prev => prev.map(m => m.id === finalMember.id ? finalMember : m));
-      if (currentUser?.id === finalMember.id) {
-          setCurrentUser(finalMember);
-      }
-      channel.postMessage({ type: 'data-changed', payload: 'members' });
+      const memberRef = doc(db, "members", finalMember.id);
+      const dataToUpdate = { ...finalMember };
+      delete (dataToUpdate as any).id;
+
+      await updateDoc(memberRef, dataToUpdate);
+
       showToast('Profil güncellendi.', 'success');
   };
   
   const deleteMember = async (memberId: ID) => {
-      // Basic deletion, doesn't handle re-assigning tasks
-      await db.dbDeleteMember(memberId);
-      setMembers(prev => prev.filter(m => m.id !== memberId));
-      channel.postMessage({ type: 'data-changed', payload: 'members' });
-      showToast('Üye silindi.', 'info');
+      // Deleting a user from Firestore only removes their data from the application's database.
+      // It DOES NOT prevent them from signing in, as their account still exists in Firebase Authentication.
+      // For a production application, a Cloud Function would be required to listen for this
+      // Firestore document deletion and then delete the corresponding user from Firebase Auth.
+      await deleteDoc(doc(db, "members", memberId));
+      showToast('Üye silindi. (Giriş engellenmedi)', 'info');
   };
   
   const updateColumnNames = async (newNames: Record<TaskStatus, string>) => {
       const newConfig: BoardConfig = { id: BOARD_CONFIG_ID, columnNames: newNames };
-      await db.dbPutConfig(newConfig);
-      setColumnNames(newNames);
-      channel.postMessage({ type: 'data-changed', payload: 'config' });
+      await setDoc(doc(db, "config", BOARD_CONFIG_ID), newConfig);
       showToast('Pano ayarları kaydedildi.', 'success');
   };
 
   const clearAllTasks = async () => {
-      await db.dbClearTasks();
-      await db.dbClearStore(DB_CONFIG.STORES.ATTACHMENTS);
-      await db.dbClearStore(DB_CONFIG.STORES.VOICE_NOTES);
-      setTasks([]);
-      channel.postMessage({ type: 'data-changed', payload: 'tasks' });
+      const q = query(collection(db, "tasks"));
+      const querySnapshot = await getDocs(q);
+      const batch = writeBatch(db);
+      querySnapshot.forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+      // Note: This does not delete associated files in storage. A cloud function is needed for that.
       showToast('Tüm görevler silindi.', 'warning');
   };
   
   const markNotificationAsRead = async (notificationId: ID) => {
-      const notification = notifications.find(n => n.id === notificationId);
-      if (notification && !notification.isRead) {
-          const updatedNotification = { ...notification, isRead: true };
-          await db.dbPutNotification(updatedNotification);
-          setNotifications(prev => prev.map(n => n.id === notificationId ? updatedNotification : n));
-          channel.postMessage({ type: 'data-changed', payload: 'notifications' });
-      }
+      await updateDoc(doc(db, "notifications", notificationId), { isRead: true });
   };
 
   const markAllNotificationsAsRead = async () => {
@@ -599,22 +458,11 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const unreadIds = notifications.filter(n => !n.isRead).map(n => n.id);
       if(unreadIds.length === 0) return;
       
-      const updatedNotifications: Notification[] = [];
-      let changed = false;
-      for(const n of notifications) {
-          if(!n.isRead) {
-              const updated = {...n, isRead: true};
-              updatedNotifications.push(updated);
-              await db.dbPutNotification(updated);
-              changed = true;
-          } else {
-              updatedNotifications.push(n);
-          }
-      }
-      setNotifications(updatedNotifications);
-      if (changed) {
-        channel.postMessage({ type: 'data-changed', payload: 'notifications' });
-      }
+      const batch = writeBatch(db);
+      unreadIds.forEach(id => {
+          batch.update(doc(db, "notifications", id), { isRead: true });
+      });
+      await batch.commit();
   };
   
   const updateNotificationSettings = (settings: NotificationSettings) => {
@@ -624,134 +472,57 @@ export const KanbanProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   };
   
   const resetBoard = async (showMsg=true) => {
-    setLoading(true);
-    await db.dbClearTasks();
-    await db.dbClearMembers();
-    await db.dbClearStore(DB_CONFIG.STORES.ATTACHMENTS);
-    await db.dbClearStore(DB_CONFIG.STORES.VOICE_NOTES);
-    await db.dbClearStore(DB_CONFIG.STORES.AVATARS);
-    await db.dbClearNotifications();
-    
-    const now = new Date().toISOString();
-    const seededMembers: Member[] = [];
-    for (const memberSeed of TEAM_MEMBERS_SEED) {
-        const newMember: Member = {
-            ...memberSeed,
-            id: crypto.randomUUID(),
-            createdAt: now,
-            updatedAt: now,
-        };
-        await db.dbPutMember(newMember);
-        seededMembers.push(newMember);
-    }
-    
-    const seededTasks: Task[] = [];
-    for (const taskSeed of TASKS_SEED) {
-        const creator = seededMembers[Math.floor(Math.random() * seededMembers.length)];
-        const responsible = seededMembers[Math.floor(Math.random() * seededMembers.length)];
-        const numAssignees = Math.floor(Math.random() * 3) + 1;
-        const assignees = new Set<Member>([responsible]);
-        while(assignees.size < numAssignees) {
-            assignees.add(seededMembers[Math.floor(Math.random() * seededMembers.length)]);
-        }
-
-        const newTask: Task = {
-            ...taskSeed,
-            id: crypto.randomUUID(),
-            creatorId: creator.id,
-            responsibleId: responsible.id,
-            assigneeIds: Array.from(assignees).map(m => m.id),
-            createdAt: now,
-            updatedAt: now,
-        };
-        await db.dbPutTask(newTask);
-        seededTasks.push(newTask);
-    }
-
-    const boardConfig: BoardConfig = { id: BOARD_CONFIG_ID, columnNames: DEFAULT_COLUMN_NAMES };
-    await db.dbPutConfig(boardConfig);
-    
-    setMembers(seededMembers);
-    setTasks(seededTasks);
-    setColumnNames(DEFAULT_COLUMN_NAMES);
-    channel.postMessage({ type: 'data-changed', payload: 'all' });
-
-    if (showMsg) {
-      showToast('Pano başarıyla sıfırlandı!', 'success');
-    }
-    setLoading(false);
+    showToast('Bu işlevsellik Firebase ile devre dışı bırakılmıştır.', 'info');
   };
 
-  // Auth
   const signIn = async (email: string, password: string): Promise<boolean> => {
-    // Fetch members directly from the database to avoid race conditions.
-    // This ensures login works even if the app's state hasn't been hydrated yet.
-    const allMembersFromDb = await db.dbGetMembers();
-    const user = allMembersFromDb.find(m => m.email.toLowerCase() === email.trim().toLowerCase());
-    
-    if (user && user.password === password) {
-        setCurrentUser(user);
-        
-        // Populate the state immediately after login to ensure the UI is consistent.
-        setMembers(allMembersFromDb);
-        const allTasks = await db.dbGetTasks();
-        const activeTasks = allTasks.filter(task => !task.isArchived);
-        setTasks(activeTasks);
-
-        try {
-            sessionStorage.setItem('currentUserEmail', user.email);
-        } catch (e) {
-            console.warn('Session storage is not available.', e);
-        }
-        showToast(`Hoş geldin, ${user.name}!`, 'success');
-        
-        await refreshNotifications(user);
-        return true;
-    }
-    showToast('E-posta veya şifre yanlış.', 'error');
-    return false;
-  };
-
-  const signOut = () => {
-    setCurrentUser(null);
-    setNotifications([]);
-    setTasks([]); // Clear tasks from state on sign out to prevent flash of old data
     try {
-        sessionStorage.removeItem('currentUserEmail');
-    } catch (e) {
-        console.warn('Session storage is not available.', e);
+      await signInWithEmailAndPassword(auth, email, password);
+      showToast(`Başarıyla giriş yapıldı!`, 'success');
+      return true;
+    } catch (error: any) {
+      console.error("Sign in error:", error);
+      showToast(error.code === 'auth/invalid-credential' ? 'E-posta veya şifre yanlış.' : 'Giriş yapılamadı.', 'error');
+      return false;
     }
+  };
+  
+  const signUp = async (name: string, email: string, password: string): Promise<boolean> => {
+    try {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+        const now = new Date().toISOString();
+        
+        const newMember: Omit<Member, 'id'> = {
+            name,
+            email,
+            role: MemberRole.MEMBER, // Default role
+            avatarUrl: `https://i.pravatar.cc/150?u=${user.uid}`,
+            createdAt: now,
+            updatedAt: now,
+        };
+        
+        await setDoc(doc(db, 'members', user.uid), newMember);
+        showToast(`Hesap oluşturuldu, hoş geldin ${name}!`, 'success');
+        return true;
+    } catch (error: any) {
+        console.error("Sign up error:", error);
+        showToast(error.code === 'auth/email-already-in-use' ? 'Bu e-posta zaten kullanımda.' : 'Kayıt başarısız.', 'error');
+        return false;
+    }
+  }
+
+  const signOut = async () => {
+    await firebaseSignOut(auth);
+    setCurrentUser(null);
     showToast('Başarıyla çıkış yapıldı.', 'info');
   };
 
   const contextValue: IKanbanContext = {
-    tasks,
-    members,
-    columnNames,
-    filters,
-    loading,
-    currentUser,
-    notifications,
-    notificationSettings,
-    addTask,
-    updateTask,
-    deleteTask,
-    moveTask,
-    archiveTasks,
-    unarchiveTask,
-    getMemberById,
-    setFilters,
-    addMember,
-    updateMember,
-    deleteMember,
-    updateColumnNames,
-    clearAllTasks,
-    resetBoard,
-    signIn,
-    signOut,
-    markNotificationAsRead,
-    markAllNotificationsAsRead,
-    updateNotificationSettings,
+    tasks, members, columnNames, filters, loading, currentUser, notifications, notificationSettings,
+    addTask, updateTask, deleteTask, moveTask, archiveTasks, unarchiveTask, getMemberById,
+    setFilters, addMember, updateMember, deleteMember, updateColumnNames, clearAllTasks,
+    resetBoard, signIn, signUp, signOut, markNotificationAsRead, markAllNotificationsAsRead, updateNotificationSettings,
   };
 
   return <KanbanContext.Provider value={contextValue}>{children}</KanbanContext.Provider>;

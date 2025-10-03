@@ -1,5 +1,5 @@
 {
-  "name": "THF WORKFLOW FINAL2",
+  "name": "THF WORKFLOW FINAL v3",
   "description": "THF WORKFLOW, görevleri yönetmek için bir Kanban panosu web uygulamasıdır. Sürükle-bırak işlevselliği, atamalarla görev oluşturma, dosya ekleri, sesli notlar, son tarihler ve IndexedDB kullanarak kalıcı depolama gibi özellikleri içerir.",
   "requestFramePermissions": [
     "microphone"
